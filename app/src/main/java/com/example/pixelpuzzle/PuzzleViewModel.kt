@@ -1,6 +1,5 @@
 package com.example.pixelpuzzle
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import androidx.lifecycle.ViewModel
@@ -9,7 +8,6 @@ import coil.ImageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,33 +25,10 @@ class PuzzleViewModel : ViewModel() {
     private var fullBitmap: Bitmap? = null
     private val accessKey = "oZS1ybE8EnX5SOSvsQ50noM-zOEaxsIthml15U36Mk8"
 
-    private val PREFS_NAME = "puzzle_prefs"
-    private val KEY_LEVEL = "current_level"
-    private val KEY_COINS = "total_coins"
-
-    fun loadSavedProgress(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val savedLevel = prefs.getInt(KEY_LEVEL, 1)
-        val savedCoins = prefs.getInt(KEY_COINS, 0)
-        _state.value = _state.value.copy(currentLevel = savedLevel, totalCoins = savedCoins)
-    }
-
-    private fun saveProgress(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().apply {
-            putInt(KEY_LEVEL, _state.value.currentLevel)
-            putInt(KEY_COINS, _state.value.totalCoins)
-            apply()
-        }
-    }
-
-    fun loadNewGame(context: Context) {
+    fun loadNewGame(context: android.content.Context) {
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, isSolved = false, showConfetti = false)
-
-            val config = LevelConfig.getConfigForLevel(_state.value.currentLevel)
-            val directImageUrl = fetchUnsplashImageUrl(config.category)
-
+            _state.value = _state.value.copy(isLoading = true, isSolved = false)
+            val directImageUrl = fetchUnsplashImageUrl()
             if (directImageUrl == null) {
                 _state.value = _state.value.copy(isLoading = false)
                 return@launch
@@ -71,25 +46,14 @@ class PuzzleViewModel : ViewModel() {
                 fullBitmap = (result as? BitmapDrawable)?.bitmap
 
                 if (fullBitmap != null) {
-                    val totalPieces = config.totalPieces
-                    val initialPieces = List(totalPieces) { i ->
-                        PuzzlePiece(
-                            id = i,
-                            originalRow = i / config.cols,
-                            originalCol = i % config.cols,
-                            currentPos = i
-                        )
+                    val initialPieces = List(9) { i ->
+                        PuzzlePiece(id = i, originalRow = i / 3, originalCol = i % 3, currentPos = i)
                     }
-                    val shuffledIndices = (0 until totalPieces).shuffled()
+                    val shuffledIndices = (0..8).shuffled()
                     val shuffledPieces = initialPieces.mapIndexed { index, piece ->
                         piece.copy(currentPos = shuffledIndices[index], unitId = piece.id)
                     }
-                    _state.value = _state.value.copy(
-                        pieces = shuffledPieces,
-                        isLoading = false,
-                        gridRows = config.rows,
-                        gridCols = config.cols
-                    )
+                    _state.value = _state.value.copy(pieces = shuffledPieces, isLoading = false)
                 }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(isLoading = false)
@@ -97,9 +61,9 @@ class PuzzleViewModel : ViewModel() {
         }
     }
 
-    private suspend fun fetchUnsplashImageUrl(category: String): String? = withContext(Dispatchers.IO) {
+    private suspend fun fetchUnsplashImageUrl(): String? = withContext(Dispatchers.IO) {
         try {
-            val apiUrl = "https://api.unsplash.com/photos/random?client_id=$accessKey&query=$category&orientation=portrait"
+            val apiUrl = "https://api.unsplash.com/photos/random?client_id=$accessKey&query=abstract,nature&orientation=portrait"
             val url = URL(apiUrl)
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
@@ -110,31 +74,30 @@ class PuzzleViewModel : ViewModel() {
         } catch (e: Exception) { null }
     }
 
-    fun onUnitMoveCompleted(unitId: Int, deltaPos: Int, context: Context) {
+    fun onUnitMoveCompleted(unitId: Int, deltaPos: Int) {
         if (deltaPos == 0) return
 
         val currentPieces = _state.value.pieces
         val movingPieces = currentPieces.filter { it.unitId == unitId }
-        val cols = _state.value.gridCols
-        val rows = _state.value.gridRows
-        val totalPieces = rows * cols
 
         // Calculate target positions WITHOUT wrap-around
         val targetPositions = mutableMapOf<PuzzlePiece, Int>()
         var validMove = true
 
         for (piece in movingPieces) {
-            val currentRow = piece.currentPos / cols
-            val currentCol = piece.currentPos % cols
+            val currentRow = piece.currentPos / 3
+            val currentCol = piece.currentPos % 3
             val newPos = piece.currentPos + deltaPos
 
-            if (newPos !in 0 until totalPieces) {
+            // Boundary check - no wrap around
+            if (newPos !in 0..8) {
                 validMove = false
                 break
             }
 
+            // Prevent horizontal wrap (moving from col 2 to 0 or vice versa)
             if (abs(deltaPos) == 1) {
-                val newRow = newPos / cols
+                val newRow = newPos / 3
                 if (newRow != currentRow) {
                     validMove = false
                     break
@@ -146,79 +109,75 @@ class PuzzleViewModel : ViewModel() {
 
         if (!validMove) return
 
+        // Check what pieces are in our target positions (obstacles)
         val movingFrom = movingPieces.map { it.currentPos }.toSet()
         val movingTo = targetPositions.values.toSet()
 
+        // Find obstacles (pieces that are in our destination but not part of our moving unit)
         val obstacles = currentPieces.filter {
             it.unitId != unitId && movingTo.contains(it.currentPos)
         }
 
-        val vacated = movingFrom.filter { !movingTo.contains(it) }.toMutableList()
+        // Vacated positions are where the moving unit was, minus where it's going
+        val vacated = movingFrom.filter { !movingTo.contains(it) }.toList()
 
-        if (obstacles.size > vacated.size) return
+        // If we don't have enough space for obstacles, don't allow the move
+        if (obstacles.size > vacated.size) {
+            return
+        }
 
+        // FIXED: Match obstacles to vacated positions in spatial order
+        // Sort both by position to maintain relative spatial ordering
+        val sortedObstacles = obstacles.sortedBy { it.currentPos }
+        val sortedVacated = vacated.sorted()
+
+        // Create a map from obstacle ID to target position
+        val obstacleTargets = sortedObstacles.mapIndexed { index, obstacle ->
+            obstacle.id to sortedVacated.getOrNull(index)
+        }.toMap()
+
+        // Create the updated pieces list
         val nextPieces = currentPieces.map { piece ->
             when {
-                piece.unitId == unitId -> piece.copy(currentPos = targetPositions[piece]!!)
-                obstacles.any { it.id == piece.id } -> {
-                    if (vacated.isEmpty()) {
-                        piece
-                    } else {
-                        val targetSlot = if (deltaPos > 0) {
-                            vacated.minOrNull() ?: piece.currentPos
-                        } else {
-                            vacated.maxOrNull() ?: piece.currentPos
-                        }
-                        vacated.remove(targetSlot)
-                        piece.copy(currentPos = targetSlot)
-                    }
+                piece.unitId == unitId -> {
+                    // This is part of the moving unit
+                    piece.copy(currentPos = targetPositions[piece]!!)
                 }
-                else -> piece
+                obstacleTargets.containsKey(piece.id) -> {
+                    // This piece is being pushed - use pre-computed target
+                    val targetSlot = obstacleTargets[piece.id] ?: piece.currentPos
+                    piece.copy(currentPos = targetSlot)
+                }
+                else -> {
+                    // This piece is not affected
+                    piece
+                }
             }
         }
 
-        val brokenPieces = breakInvalidMerges(nextPieces, cols)
-        val mergedPieces = checkMerges(brokenPieces, cols)
-        val isSolved = mergedPieces.all { it.currentPos == (it.originalRow * cols + it.originalCol) }
+        // First break any invalid merges, then check for new merges
+        val brokenPieces = breakInvalidMerges(nextPieces)
+        val mergedPieces = checkMerges(brokenPieces)
+        val isSolved = mergedPieces.all { it.currentPos == (it.originalRow * 3 + it.originalCol) }
 
-        if (isSolved) {
-            val newCoins = _state.value.totalCoins + 20
-            _state.value = _state.value.copy(
-                pieces = mergedPieces,
-                isSolved = true,
-                showConfetti = true,
-                totalCoins = newCoins
-            )
-            saveProgress(context)
-
-            viewModelScope.launch {
-                delay(3000)
-                _state.value = _state.value.copy(showConfetti = false)
-            }
-        } else {
-            _state.value = _state.value.copy(pieces = mergedPieces, isSolved = false)
-        }
+        _state.value = _state.value.copy(pieces = mergedPieces, isSolved = isSolved)
     }
 
-    fun nextLevel(context: Context) {
-        val newLevel = _state.value.currentLevel + 1
-        _state.value = _state.value.copy(currentLevel = newLevel, isSolved = false)
-        saveProgress(context)
-        loadNewGame(context)
-    }
-
-    private fun breakInvalidMerges(pieces: List<PuzzlePiece>, cols: Int): List<PuzzlePiece> {
+    private fun breakInvalidMerges(pieces: List<PuzzlePiece>): List<PuzzlePiece> {
         val result = pieces.toMutableList()
         var nextAvailableId = pieces.maxOf { it.id } + 1
 
+        // Group pieces by unitId
         val unitGroups = result.groupBy { it.unitId }
 
         for ((unitId, unitPieces) in unitGroups) {
-            if (unitPieces.size <= 1) continue
+            if (unitPieces.size <= 1) continue // Single pieces can't break
 
+            // Check each piece to see if it's still validly connected
             val toSplit = mutableListOf<Int>()
 
             for (piece in unitPieces) {
+                // Check if this piece has any valid neighbors in the same unit
                 var hasValidNeighbor = false
 
                 for (otherPiece in unitPieces) {
@@ -230,19 +189,16 @@ class PuzzleViewModel : ViewModel() {
 
                     if (!isLogicalNeighbor) continue
 
-                    // Check if they're physical neighbors (adjacent on current grid)
-                    val r1 = piece.currentPos / cols
-                    val c1 = piece.currentPos % cols
-                    val r2 = otherPiece.currentPos / cols
-                    val c2 = otherPiece.currentPos % cols
-
-                    val isPhysicalNeighbor =
-                        (abs(r1 - r2) == 1 && c1 == c2) ||  // Vertical neighbors
-                                (abs(c1 - c2) == 1 && r1 == r2)     // Horizontal neighbors
+                    // Check if they're physical neighbors (adjacent on grid)
+                    val r1 = piece.currentPos / 3
+                    val c1 = piece.currentPos % 3
+                    val r2 = otherPiece.currentPos / 3
+                    val c2 = otherPiece.currentPos % 3
+                    val isPhysicalNeighbor = (abs(r1 - r2) == 1 && c1 == c2) || (abs(c1 - c2) == 1 && r1 == r2)
 
                     if (!isPhysicalNeighbor) continue
 
-                    // Check if they're in correct relative orientation
+                    // Check if they're in the correct relative orientation
                     val correctOrientation = (r1 - r2 == piece.originalRow - otherPiece.originalRow) &&
                             (c1 - c2 == piece.originalCol - otherPiece.originalCol)
 
@@ -252,11 +208,13 @@ class PuzzleViewModel : ViewModel() {
                     }
                 }
 
+                // If this piece has no valid neighbors, mark it for splitting
                 if (!hasValidNeighbor) {
                     toSplit.add(piece.id)
                 }
             }
 
+            // Split off pieces that are no longer validly connected
             for (pieceId in toSplit) {
                 val index = result.indexOfFirst { it.id == pieceId }
                 if (index >= 0) {
@@ -268,7 +226,7 @@ class PuzzleViewModel : ViewModel() {
         return result
     }
 
-    private fun checkMerges(pieces: List<PuzzlePiece>, cols: Int): List<PuzzlePiece> {
+    private fun checkMerges(pieces: List<PuzzlePiece>): List<PuzzlePiece> {
         val result = pieces.toMutableList()
         var changed = true
         while (changed) {
@@ -279,35 +237,22 @@ class PuzzleViewModel : ViewModel() {
                     val p1 = result[i]
                     val p2 = result[j]
                     if (p1.unitId != p2.unitId) {
-                        // Check if they're logical neighbors (adjacent in original image)
                         val isLogicalNeighbor = (abs(p1.originalRow - p2.originalRow) == 1 && p1.originalCol == p2.originalCol) ||
                                 (abs(p1.originalCol - p2.originalCol) == 1 && p1.originalRow == p2.originalRow)
 
-                        if (!isLogicalNeighbor) continue
+                        val r1 = p1.currentPos / 3; val c1 = p1.currentPos % 3
+                        val r2 = p2.currentPos / 3; val c2 = p2.currentPos % 3
+                        val isPhysicalNeighbor = (abs(r1 - r2) == 1 && c1 == c2) || (abs(c1 - c2) == 1 && r1 == r2)
 
-                        // Check if they're physical neighbors (adjacent on current grid)
-                        val r1 = p1.currentPos / cols
-                        val c1 = p1.currentPos % cols
-                        val r2 = p2.currentPos / cols
-                        val c2 = p2.currentPos % cols
-
-                        val isPhysicalNeighbor =
-                            (abs(r1 - r2) == 1 && c1 == c2) ||  // Vertical neighbors
-                                    (abs(c1 - c2) == 1 && r1 == r2)     // Horizontal neighbors
-
-                        if (!isPhysicalNeighbor) continue
-
-                        // Check if they're in the correct relative orientation
-                        val correctOrientation = (r1 - r2 == p1.originalRow - p2.originalRow) &&
-                                (c1 - c2 == p1.originalCol - p2.originalCol)
-
-                        if (correctOrientation) {
-                            val oldId = p2.unitId
-                            val newId = p1.unitId
-                            result.indices.forEach { k ->
-                                if (result[k].unitId == oldId) result[k] = result[k].copy(unitId = newId)
+                        if (isLogicalNeighbor && isPhysicalNeighbor) {
+                            if ((r1 - r2 == p1.originalRow - p2.originalRow) && (c1 - c2 == p1.originalCol - p2.originalCol)) {
+                                val oldId = p2.unitId
+                                val newId = p1.unitId
+                                result.indices.forEach { k ->
+                                    if (result[k].unitId == oldId) result[k] = result[k].copy(unitId = newId)
+                                }
+                                changed = true
                             }
-                            changed = true
                         }
                     }
                 }
