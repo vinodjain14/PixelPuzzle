@@ -2,6 +2,7 @@ package com.example.pixelpuzzle
 
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.ImageLoader
@@ -24,6 +25,13 @@ class PuzzleViewModel : ViewModel() {
 
     private var fullBitmap: Bitmap? = null
     private val accessKey = "oZS1ybE8EnX5SOSvsQ50noM-zOEaxsIthml15U36Mk8"
+
+    // Track next available unit ID globally
+    private var nextAvailableUnitId = 0
+
+    companion object {
+        private const val TAG = "PuzzleViewModel"
+    }
 
     fun loadNewGame(context: android.content.Context) {
         viewModelScope.launch {
@@ -53,10 +61,18 @@ class PuzzleViewModel : ViewModel() {
                     val shuffledPieces = initialPieces.mapIndexed { index, piece ->
                         piece.copy(currentPos = shuffledIndices[index], unitId = piece.id)
                     }
+
+                    // Reset unit ID counter
+                    nextAvailableUnitId = 9
+
                     _state.value = _state.value.copy(pieces = shuffledPieces, isLoading = false)
+
+                    Log.d(TAG, "=== NEW GAME LOADED ===")
+                    Log.d(TAG, "Initial shuffled positions: ${shuffledPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
                 }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(isLoading = false)
+                Log.e(TAG, "Error loading game", e)
             }
         }
     }
@@ -71,14 +87,27 @@ class PuzzleViewModel : ViewModel() {
                 val response = connection.inputStream.bufferedReader().use { it.readText() }
                 JSONObject(response).getJSONObject("urls").getString("regular")
             } else null
-        } catch (e: Exception) { null }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching Unsplash image", e)
+            null
+        }
     }
 
     fun onUnitMoveCompleted(unitId: Int, deltaPos: Int) {
-        if (deltaPos == 0) return
+        Log.d(TAG, "")
+        Log.d(TAG, "========================================")
+        Log.d(TAG, "MOVE ATTEMPTED: Unit $unitId, Delta: $deltaPos")
+
+        if (deltaPos == 0) {
+            Log.d(TAG, "MOVE CANCELLED: Delta is 0 (no movement)")
+            Log.d(TAG, "========================================")
+            return
+        }
 
         val currentPieces = _state.value.pieces
         val movingPieces = currentPieces.filter { it.unitId == unitId }
+
+        Log.d(TAG, "Moving pieces: ${movingPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
 
         // Calculate target positions WITHOUT wrap-around
         val targetPositions = mutableMapOf<PuzzlePiece, Int>()
@@ -92,22 +121,37 @@ class PuzzleViewModel : ViewModel() {
             // Boundary check - no wrap around
             if (newPos !in 0..8) {
                 validMove = false
+                Log.d(TAG, "MOVE INVALID: Piece ${piece.id} would move out of bounds (pos ${piece.currentPos} -> $newPos)")
                 break
             }
 
             // Prevent horizontal wrap (moving from col 2 to 0 or vice versa)
             if (abs(deltaPos) == 1) {
                 val newRow = newPos / 3
-                if (newRow != currentRow) {
-                    validMove = false
-                    break
+                val newCol = newPos % 3
+
+                // Only check for wrap if this is ACTUALLY a horizontal movement
+                // Horizontal movement means the row stays the same
+                if (currentRow == newRow) {
+                    // This is horizontal - check for wrapping
+                    if (abs(currentCol - newCol) != 1) {
+                        validMove = false
+                        Log.d(TAG, "MOVE INVALID: Piece ${piece.id} would wrap horizontally")
+                        break
+                    }
                 }
+                // If rows are different, this is vertical movement (like 2→3 or 3→2), which is valid
             }
 
             targetPositions[piece] = newPos
         }
 
-        if (!validMove) return
+        if (!validMove) {
+            Log.d(TAG, "========================================")
+            return
+        }
+
+        Log.d(TAG, "Target positions: ${targetPositions.map { "Piece ${it.key.id} -> pos ${it.value}" }}")
 
         // Check what pieces are in our target positions (obstacles)
         val movingFrom = movingPieces.map { it.currentPos }.toSet()
@@ -121,13 +165,17 @@ class PuzzleViewModel : ViewModel() {
         // Vacated positions are where the moving unit was, minus where it's going
         val vacated = movingFrom.filter { !movingTo.contains(it) }.toList()
 
+        Log.d(TAG, "Obstacles found: ${obstacles.map { "Piece ${it.id} (Unit ${it.unitId}) at pos ${it.currentPos}" }}")
+        Log.d(TAG, "Vacated positions: $vacated")
+
         // If we don't have enough space for obstacles, don't allow the move
         if (obstacles.size > vacated.size) {
+            Log.d(TAG, "MOVE INVALID: Not enough space for obstacles (${obstacles.size} obstacles, ${vacated.size} vacated spots)")
+            Log.d(TAG, "========================================")
             return
         }
 
-        // FIXED: Match obstacles to vacated positions in spatial order
-        // Sort both by position to maintain relative spatial ordering
+        // Match obstacles to vacated positions in spatial order
         val sortedObstacles = obstacles.sortedBy { it.currentPos }
         val sortedVacated = vacated.sorted()
 
@@ -136,16 +184,21 @@ class PuzzleViewModel : ViewModel() {
             obstacle.id to sortedVacated.getOrNull(index)
         }.toMap()
 
+        Log.d(TAG, "Obstacle movements: ${obstacleTargets.map { "Piece ${it.key} -> pos ${it.value}" }}")
+
         // Create the updated pieces list
         val nextPieces = currentPieces.map { piece ->
             when {
                 piece.unitId == unitId -> {
                     // This is part of the moving unit
-                    piece.copy(currentPos = targetPositions[piece]!!)
+                    val newPos = targetPositions[piece]!!
+                    Log.d(TAG, "Moving piece ${piece.id}: pos ${piece.currentPos} -> $newPos")
+                    piece.copy(currentPos = newPos)
                 }
                 obstacleTargets.containsKey(piece.id) -> {
                     // This piece is being pushed - use pre-computed target
                     val targetSlot = obstacleTargets[piece.id] ?: piece.currentPos
+                    Log.d(TAG, "Pushing piece ${piece.id}: pos ${piece.currentPos} -> $targetSlot")
                     piece.copy(currentPos = targetSlot)
                 }
                 else -> {
@@ -156,16 +209,23 @@ class PuzzleViewModel : ViewModel() {
         }
 
         // First break any invalid merges, then check for new merges
+        Log.d(TAG, "Checking for invalid merges...")
         val brokenPieces = breakInvalidMerges(nextPieces)
+
+        Log.d(TAG, "Checking for new merges...")
         val mergedPieces = checkMerges(brokenPieces)
+
         val isSolved = mergedPieces.all { it.currentPos == (it.originalRow * 3 + it.originalCol) }
+
+        Log.d(TAG, "Final state: ${mergedPieces.map { "Piece ${it.id} (Unit ${it.unitId}) at pos ${it.currentPos}" }}")
+        Log.d(TAG, "Puzzle solved: $isSolved")
+        Log.d(TAG, "========================================")
 
         _state.value = _state.value.copy(pieces = mergedPieces, isSolved = isSolved)
     }
 
     private fun breakInvalidMerges(pieces: List<PuzzlePiece>): List<PuzzlePiece> {
         val result = pieces.toMutableList()
-        var nextAvailableId = pieces.maxOf { it.id } + 1
 
         // Group pieces by unitId
         val unitGroups = result.groupBy { it.unitId }
@@ -173,11 +233,10 @@ class PuzzleViewModel : ViewModel() {
         for ((unitId, unitPieces) in unitGroups) {
             if (unitPieces.size <= 1) continue // Single pieces can't break
 
-            // Check each piece to see if it's still validly connected
-            val toSplit = mutableListOf<Int>()
+            // For each piece in the unit, check if it has any valid neighbor
+            val piecesToSplit = mutableListOf<Int>()
 
             for (piece in unitPieces) {
-                // Check if this piece has any valid neighbors in the same unit
                 var hasValidNeighbor = false
 
                 for (otherPiece in unitPieces) {
@@ -210,15 +269,21 @@ class PuzzleViewModel : ViewModel() {
 
                 // If this piece has no valid neighbors, mark it for splitting
                 if (!hasValidNeighbor) {
-                    toSplit.add(piece.id)
+                    piecesToSplit.add(piece.id)
                 }
             }
 
             // Split off pieces that are no longer validly connected
-            for (pieceId in toSplit) {
+            if (piecesToSplit.isNotEmpty()) {
+                Log.d(TAG, "Breaking unit $unitId: splitting pieces $piecesToSplit")
+            }
+
+            for (pieceId in piecesToSplit) {
                 val index = result.indexOfFirst { it.id == pieceId }
                 if (index >= 0) {
-                    result[index] = result[index].copy(unitId = nextAvailableId++)
+                    val newUnitId = nextAvailableUnitId++
+                    Log.d(TAG, "  Piece $pieceId: Unit $unitId -> Unit $newUnitId")
+                    result[index] = result[index].copy(unitId = newUnitId)
                 }
             }
         }
@@ -229,6 +294,8 @@ class PuzzleViewModel : ViewModel() {
     private fun checkMerges(pieces: List<PuzzlePiece>): List<PuzzlePiece> {
         val result = pieces.toMutableList()
         var changed = true
+        var mergeCount = 0
+
         while (changed) {
             changed = false
             for (i in result.indices) {
@@ -248,6 +315,10 @@ class PuzzleViewModel : ViewModel() {
                             if ((r1 - r2 == p1.originalRow - p2.originalRow) && (c1 - c2 == p1.originalCol - p2.originalCol)) {
                                 val oldId = p2.unitId
                                 val newId = p1.unitId
+
+                                mergeCount++
+                                Log.d(TAG, "MERGE #$mergeCount: Unit $oldId merged into Unit $newId (Pieces ${p1.id} & ${p2.id})")
+
                                 result.indices.forEach { k ->
                                     if (result[k].unitId == oldId) result[k] = result[k].copy(unitId = newId)
                                 }
@@ -258,6 +329,11 @@ class PuzzleViewModel : ViewModel() {
                 }
             }
         }
+
+        if (mergeCount == 0) {
+            Log.d(TAG, "No merges occurred")
+        }
+
         return result
     }
 

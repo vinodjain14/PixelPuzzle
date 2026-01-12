@@ -30,6 +30,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -205,6 +206,8 @@ fun DraggablePuzzleGrid(
     var shouldFlip by remember { mutableStateOf(false) }
     var animationComplete by remember { mutableStateOf(false) }
 
+    val density = LocalDensity.current
+
     // Trigger staggered animation when pieces change
     LaunchedEffect(state.pieces.size) {
         if (state.pieces.isNotEmpty() && !animationComplete) {
@@ -255,8 +258,8 @@ fun DraggablePuzzleGrid(
                                 )
                             }
                             .size(
-                                width = (cellWidth / LocalContext.current.resources.displayMetrics.density).dp,
-                                height = (cellHeight / LocalContext.current.resources.displayMetrics.density).dp
+                                width = with(density) { cellWidth.toDp() },
+                                height = with(density) { cellHeight.toDp() }
                             )
                             .padding(1.dp) // Reduced gap between blocks
                             .clip(RoundedCornerShape(8.dp))
@@ -356,6 +359,9 @@ fun DraggablePuzzleGrid(
                     )
                 }
 
+                // Gap between separate pieces in dp
+                val gapSize = 1.dp
+
                 Box(
                     modifier = Modifier
                         .offset { displayOffset }
@@ -364,25 +370,18 @@ fun DraggablePuzzleGrid(
                             this.scaleY = scale
                             this.alpha = alpha
                             this.rotationY = rotationY
-                            this.cameraDistance = 12f * density
+                            this.cameraDistance = 12f * this.density
                         }
                         .zIndex(if (isPartOfDraggingUnit) 1f else 0f)
                         .size(
-                            width = (cellWidth / LocalContext.current.resources.displayMetrics.density).dp,
-                            height = (cellHeight / LocalContext.current.resources.displayMetrics.density).dp
+                            width = with(density) { cellWidth.toDp() },
+                            height = with(density) { cellHeight.toDp() }
                         )
-                        .then(
-                            // Only add padding to edges that are NOT connected - this creates seamless merges
-                            if (!hasRight && !hasBottom && !hasLeft && !hasTop) {
-                                Modifier.padding(1.dp)
-                            } else {
-                                Modifier.padding(
-                                    end = if (!hasRight) 1.dp else 0.dp,
-                                    bottom = if (!hasBottom) 1.dp else 0.dp,
-                                    start = if (!hasLeft) 1.dp else 0.dp,
-                                    top = if (!hasTop) 1.dp else 0.dp
-                                )
-                            }
+                        .padding(
+                            end = if (!hasRight) gapSize else 0.dp,
+                            bottom = if (!hasBottom) gapSize else 0.dp,
+                            start = if (!hasLeft) gapSize else 0.dp,
+                            top = if (!hasTop) gapSize else 0.dp
                         )
                         .shadow(if (isPartOfDraggingUnit) 12.dp else 0.dp, shape)
                         .clip(shape)
