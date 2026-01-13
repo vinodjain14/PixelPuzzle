@@ -2,7 +2,6 @@ package com.example.pixelpuzzle
 
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.ImageLoader
@@ -67,19 +66,20 @@ class PuzzleViewModel : ViewModel() {
 
                     _state.value = _state.value.copy(pieces = shuffledPieces, isLoading = false)
 
-                    Log.d(TAG, "=== NEW GAME LOADED ===")
-                    Log.d(TAG, "Initial shuffled positions: ${shuffledPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
+                    DebugConfig.d(TAG, "=== NEW GAME LOADED ===")
+                    DebugConfig.d(TAG, "Initial shuffled positions: ${shuffledPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
                 }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(isLoading = false)
-                Log.e(TAG, "Error loading game", e)
+                DebugConfig.e(TAG, "Error loading game", e)
             }
         }
     }
 
     private suspend fun fetchUnsplashImageUrl(): String? = withContext(Dispatchers.IO) {
         try {
-            val apiUrl = "https://api.unsplash.com/photos/random?client_id=$accessKey&query=abstract,nature&orientation=portrait"
+            // Request square images (1080x1080) to match the play board
+            val apiUrl = "https://api.unsplash.com/photos/random?client_id=$accessKey&query=abstract,nature&orientation=squarish"
             val url = URL(apiUrl)
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
@@ -88,26 +88,26 @@ class PuzzleViewModel : ViewModel() {
                 JSONObject(response).getJSONObject("urls").getString("regular")
             } else null
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching Unsplash image", e)
+            DebugConfig.e(TAG, "Error fetching Unsplash image", e)
             null
         }
     }
 
     fun onUnitMoveCompleted(unitId: Int, deltaPos: Int) {
-        Log.d(TAG, "")
-        Log.d(TAG, "========================================")
-        Log.d(TAG, "MOVE ATTEMPTED: Unit $unitId, Delta: $deltaPos")
+        DebugConfig.d(TAG, "")
+        DebugConfig.d(TAG, "========================================")
+        DebugConfig.d(TAG, "MOVE ATTEMPTED: Unit $unitId, Delta: $deltaPos")
 
         if (deltaPos == 0) {
-            Log.d(TAG, "MOVE CANCELLED: Delta is 0 (no movement)")
-            Log.d(TAG, "========================================")
+            DebugConfig.d(TAG, "MOVE CANCELLED: Delta is 0 (no movement)")
+            DebugConfig.d(TAG, "========================================")
             return
         }
 
         val currentPieces = _state.value.pieces
         val movingPieces = currentPieces.filter { it.unitId == unitId }
 
-        Log.d(TAG, "Moving pieces: ${movingPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
+        DebugConfig.d(TAG, "Moving pieces: ${movingPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
 
         // Calculate target positions WITHOUT wrap-around
         val targetPositions = mutableMapOf<PuzzlePiece, Int>()
@@ -121,7 +121,7 @@ class PuzzleViewModel : ViewModel() {
             // Boundary check - no wrap around
             if (newPos !in 0..8) {
                 validMove = false
-                Log.d(TAG, "MOVE INVALID: Piece ${piece.id} would move out of bounds (pos ${piece.currentPos} -> $newPos)")
+                DebugConfig.d(TAG, "MOVE INVALID: Piece ${piece.id} would move out of bounds (pos ${piece.currentPos} -> $newPos)")
                 break
             }
 
@@ -136,7 +136,7 @@ class PuzzleViewModel : ViewModel() {
                     // This is horizontal - check for wrapping
                     if (abs(currentCol - newCol) != 1) {
                         validMove = false
-                        Log.d(TAG, "MOVE INVALID: Piece ${piece.id} would wrap horizontally")
+                        DebugConfig.d(TAG, "MOVE INVALID: Piece ${piece.id} would wrap horizontally")
                         break
                     }
                 }
@@ -147,11 +147,11 @@ class PuzzleViewModel : ViewModel() {
         }
 
         if (!validMove) {
-            Log.d(TAG, "========================================")
+            DebugConfig.d(TAG, "========================================")
             return
         }
 
-        Log.d(TAG, "Target positions: ${targetPositions.map { "Piece ${it.key.id} -> pos ${it.value}" }}")
+        DebugConfig.d(TAG, "Target positions: ${targetPositions.map { "Piece ${it.key.id} -> pos ${it.value}" }}")
 
         // Check what pieces are in our target positions (obstacles)
         val movingFrom = movingPieces.map { it.currentPos }.toSet()
@@ -165,13 +165,13 @@ class PuzzleViewModel : ViewModel() {
         // Vacated positions are where the moving unit was, minus where it's going
         val vacated = movingFrom.filter { !movingTo.contains(it) }.toList()
 
-        Log.d(TAG, "Obstacles found: ${obstacles.map { "Piece ${it.id} (Unit ${it.unitId}) at pos ${it.currentPos}" }}")
-        Log.d(TAG, "Vacated positions: $vacated")
+        DebugConfig.d(TAG, "Obstacles found: ${obstacles.map { "Piece ${it.id} (Unit ${it.unitId}) at pos ${it.currentPos}" }}")
+        DebugConfig.d(TAG, "Vacated positions: $vacated")
 
         // If we don't have enough space for obstacles, don't allow the move
         if (obstacles.size > vacated.size) {
-            Log.d(TAG, "MOVE INVALID: Not enough space for obstacles (${obstacles.size} obstacles, ${vacated.size} vacated spots)")
-            Log.d(TAG, "========================================")
+            DebugConfig.d(TAG, "MOVE INVALID: Not enough space for obstacles (${obstacles.size} obstacles, ${vacated.size} vacated spots)")
+            DebugConfig.d(TAG, "========================================")
             return
         }
 
@@ -184,7 +184,7 @@ class PuzzleViewModel : ViewModel() {
             obstacle.id to sortedVacated.getOrNull(index)
         }.toMap()
 
-        Log.d(TAG, "Obstacle movements: ${obstacleTargets.map { "Piece ${it.key} -> pos ${it.value}" }}")
+        DebugConfig.d(TAG, "Obstacle movements: ${obstacleTargets.map { "Piece ${it.key} -> pos ${it.value}" }}")
 
         // Create the updated pieces list
         val nextPieces = currentPieces.map { piece ->
@@ -192,13 +192,13 @@ class PuzzleViewModel : ViewModel() {
                 piece.unitId == unitId -> {
                     // This is part of the moving unit
                     val newPos = targetPositions[piece]!!
-                    Log.d(TAG, "Moving piece ${piece.id}: pos ${piece.currentPos} -> $newPos")
+                    DebugConfig.d(TAG, "Moving piece ${piece.id}: pos ${piece.currentPos} -> $newPos")
                     piece.copy(currentPos = newPos)
                 }
                 obstacleTargets.containsKey(piece.id) -> {
                     // This piece is being pushed - use pre-computed target
                     val targetSlot = obstacleTargets[piece.id] ?: piece.currentPos
-                    Log.d(TAG, "Pushing piece ${piece.id}: pos ${piece.currentPos} -> $targetSlot")
+                    DebugConfig.d(TAG, "Pushing piece ${piece.id}: pos ${piece.currentPos} -> $targetSlot")
                     piece.copy(currentPos = targetSlot)
                 }
                 else -> {
@@ -209,17 +209,17 @@ class PuzzleViewModel : ViewModel() {
         }
 
         // First break any invalid merges, then check for new merges
-        Log.d(TAG, "Checking for invalid merges...")
+        DebugConfig.d(TAG, "Checking for invalid merges...")
         val brokenPieces = breakInvalidMerges(nextPieces)
 
-        Log.d(TAG, "Checking for new merges...")
+        DebugConfig.d(TAG, "Checking for new merges...")
         val mergedPieces = checkMerges(brokenPieces)
 
         val isSolved = mergedPieces.all { it.currentPos == (it.originalRow * 3 + it.originalCol) }
 
-        Log.d(TAG, "Final state: ${mergedPieces.map { "Piece ${it.id} (Unit ${it.unitId}) at pos ${it.currentPos}" }}")
-        Log.d(TAG, "Puzzle solved: $isSolved")
-        Log.d(TAG, "========================================")
+        DebugConfig.d(TAG, "Final state: ${mergedPieces.map { "Piece ${it.id} (Unit ${it.unitId}) at pos ${it.currentPos}" }}")
+        DebugConfig.d(TAG, "Puzzle solved: $isSolved")
+        DebugConfig.d(TAG, "========================================")
 
         _state.value = _state.value.copy(pieces = mergedPieces, isSolved = isSolved)
     }
@@ -275,14 +275,14 @@ class PuzzleViewModel : ViewModel() {
 
             // Split off pieces that are no longer validly connected
             if (piecesToSplit.isNotEmpty()) {
-                Log.d(TAG, "Breaking unit $unitId: splitting pieces $piecesToSplit")
+                DebugConfig.d(TAG, "Breaking unit $unitId: splitting pieces $piecesToSplit")
             }
 
             for (pieceId in piecesToSplit) {
                 val index = result.indexOfFirst { it.id == pieceId }
                 if (index >= 0) {
                     val newUnitId = nextAvailableUnitId++
-                    Log.d(TAG, "  Piece $pieceId: Unit $unitId -> Unit $newUnitId")
+                    DebugConfig.d(TAG, "  Piece $pieceId: Unit $unitId -> Unit $newUnitId")
                     result[index] = result[index].copy(unitId = newUnitId)
                 }
             }
@@ -317,7 +317,7 @@ class PuzzleViewModel : ViewModel() {
                                 val newId = p1.unitId
 
                                 mergeCount++
-                                Log.d(TAG, "MERGE #$mergeCount: Unit $oldId merged into Unit $newId (Pieces ${p1.id} & ${p2.id})")
+                                DebugConfig.d(TAG, "MERGE #$mergeCount: Unit $oldId merged into Unit $newId (Pieces ${p1.id} & ${p2.id})")
 
                                 result.indices.forEach { k ->
                                     if (result[k].unitId == oldId) result[k] = result[k].copy(unitId = newId)
@@ -331,7 +331,7 @@ class PuzzleViewModel : ViewModel() {
         }
 
         if (mergeCount == 0) {
-            Log.d(TAG, "No merges occurred")
+            DebugConfig.d(TAG, "No merges occurred")
         }
 
         return result

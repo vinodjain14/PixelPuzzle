@@ -58,6 +58,8 @@ class MainActivity : ComponentActivity() {
 fun PuzzleApp(vm: PuzzleViewModel = viewModel()) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
+    var boardSize by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
 
     LaunchedEffect(Unit) { vm.loadNewGame(context) }
 
@@ -69,7 +71,12 @@ fun PuzzleApp(vm: PuzzleViewModel = viewModel()) {
             Text("Pixel Puzzle", fontSize = 32.sp, color = Color.Black, modifier = Modifier.padding(top = 16.dp))
             Text("Slide & Merge Units", color = Color.Gray, modifier = Modifier.padding(bottom = 32.dp))
 
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(bottom = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 if (state.isLoading) {
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 } else {
@@ -85,23 +92,42 @@ fun PuzzleApp(vm: PuzzleViewModel = viewModel()) {
                                 label = "solvedScale"
                             )
 
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Solved Puzzle",
+                            // Use the exact same size as the playing board
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat())
+                                    .size(
+                                        width = with(density) { boardSize.width.toDp() },
+                                        height = with(density) { boardSize.height.toDp() }
+                                    )
                                     .graphicsLayer {
                                         this.scaleX = scale
                                         this.scaleY = scale
                                     }
-                                    .shadow(16.dp, RoundedCornerShape(16.dp))
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFF1E1E1E)),
-                                contentScale = ContentScale.Fit
-                            )
+                                    .background(Color.Black)
+                                    .padding(1.dp)
+                                    .background(Color(0xFF1E1E1E))
+                            ) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = "Solved Puzzle",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
                         } else {
-                            DraggablePuzzleGrid(state, bitmap, vm::onUnitMoveCompleted)
+                            DraggablePuzzleGrid(
+                                state = state,
+                                bitmap = bitmap,
+                                onUnitMove = vm::onUnitMoveCompleted,
+                                onSizeChanged = { size ->
+                                    if (boardSize != size) {
+                                        boardSize = size
+                                        val widthDp = with(density) { size.width.toDp() }
+                                        val heightDp = with(density) { size.height.toDp() }
+                                        DebugConfig.d("PuzzleBoard", "Board Size: ${size.width}px × ${size.height}px (${widthDp} × ${heightDp})")
+                                    }
+                                }
+                            )
                         }
                     }
                 }
@@ -193,7 +219,8 @@ data class ConfettiParticle(
 fun DraggablePuzzleGrid(
     state: GameState,
     bitmap: Bitmap,
-    onUnitMove: (Int, Int) -> Unit
+    onUnitMove: (Int, Int) -> Unit,
+    onSizeChanged: (IntSize) -> Unit = {}
 ) {
     var gridSize by remember { mutableStateOf(IntSize.Zero) }
     var draggingUnitId by remember { mutableStateOf<Int?>(null) }
@@ -240,7 +267,10 @@ fun DraggablePuzzleGrid(
             .fillMaxSize()
             .background(Color(0xFF4CAF50)) // Green background
             .padding(2.dp) // Padding around the entire grid
-            .onGloballyPositioned { gridSize = it.size }
+            .onGloballyPositioned {
+                gridSize = it.size
+                onSizeChanged(it.size)
+            }
     ) {
         if (gridSize != IntSize.Zero) {
             val cellWidth = gridSize.width / 3
