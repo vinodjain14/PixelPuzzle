@@ -389,7 +389,7 @@ fun DraggablePuzzleGrid(
                     )
                 }
 
-                // Gap between separate pieces in dp
+                // Gap between separate pieces/units - only apply on exposed edges
                 val gapSize = 1.dp
 
                 Box(
@@ -408,6 +408,7 @@ fun DraggablePuzzleGrid(
                             height = with(density) { cellHeight.toDp() }
                         )
                         .padding(
+                            // Only add padding on edges that are NOT connected to same unit
                             end = if (!hasRight) gapSize else 0.dp,
                             bottom = if (!hasBottom) gapSize else 0.dp,
                             start = if (!hasLeft) gapSize else 0.dp,
@@ -497,7 +498,7 @@ fun PuzzlePieceImage(piece: PuzzlePiece, fullBitmap: Bitmap) {
     Image(
         bitmap = cropped,
         contentDescription = null,
-        contentScale = ContentScale.Crop,
+        contentScale = ContentScale.FillBounds,
         modifier = Modifier.fillMaxSize()
     )
 }
