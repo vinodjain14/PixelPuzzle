@@ -74,7 +74,35 @@ class PuzzleViewModel : ViewModel() {
 
     private suspend fun fetchUnsplashImageUrl(): String? = withContext(Dispatchers.IO) {
         try {
-            val apiUrl = "https://api.unsplash.com/photos/random?client_id=$accessKey&query=abstract,nature&orientation=squarish"
+            // Random image categories for variety
+            val categories = listOf(
+                "abstract",
+                "nature",
+                "architecture",
+                "patterns",
+                "textures",
+                "colors",
+                "geometric",
+                "landscape",
+                "minimal",
+                "gradient",
+                "flowers",
+                "animals",
+                "food",
+                "technology",
+                "space",
+                "ocean",
+                "mountains",
+                "city",
+                "art",
+                "sky"
+            )
+
+            val randomCategory = categories.random()
+            DebugConfig.d(TAG, "Fetching image category: $randomCategory")
+
+            // Request square images with random category
+            val apiUrl = "https://api.unsplash.com/photos/random?client_id=$accessKey&query=$randomCategory&orientation=squarish"
             val url = URL(apiUrl)
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
