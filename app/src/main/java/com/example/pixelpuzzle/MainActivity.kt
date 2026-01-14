@@ -10,6 +10,7 @@ import android.os.VibratorManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -100,7 +102,7 @@ fun PixelPuzzleApp() {
                 },
                 onNextLevel = {
                     val nextLevel = level + 1
-                    if (nextLevel <= 20) {
+                    if (nextLevel <= LevelPaths.TOTAL_LEVELS) {
                         navController.navigate(Screen.Game.createRoute(nextLevel)) {
                             popUpTo(Screen.Game.route) { inclusive = true }
                         }
@@ -124,10 +126,9 @@ fun GameScreen(
 ) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
-    var boardSize by remember { mutableStateOf(IntSize.Zero) }
-    val density = LocalDensity.current
     val showGameSettings = remember { mutableStateOf(false) }
     val currentPoints = remember { mutableStateOf(GamePreferences.getTotalPoints(context)) }
+    val difficulty = getDifficultyForLevel(level)
 
     fun triggerVibration() {
         if (GamePreferences.isVibrationEnabled(context)) {
@@ -140,16 +141,16 @@ fun GameScreen(
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+                vibrator.vibrate(VibrationEffect.createOneShot(15, VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
                 @Suppress("DEPRECATION")
-                vibrator.vibrate(50)
+                vibrator.vibrate(15)
             }
         }
     }
 
     LaunchedEffect(level) {
-        vm.loadNewGame(context)
+        vm.loadNewGame(context, level)
     }
 
     LaunchedEffect(state.isSolved) {
@@ -170,13 +171,25 @@ fun GameScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Points: ${currentPoints.value}",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF6650a4)
-                )
+                // Left side - Gold coin with points
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    Text(
+                        text = "🪙",
+                        fontSize = 32.sp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "${currentPoints.value}",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD700)
+                    )
+                }
 
+                // Center - Level number only
                 Text(
                     text = "LEVEL $level",
                     fontSize = 24.sp,
@@ -184,6 +197,7 @@ fun GameScreen(
                     color = Color.Black
                 )
 
+                // Right side - Settings
                 IconButton(onClick = { showGameSettings.value = true }) {
                     Icon(
                         imageVector = Icons.Default.Settings,
@@ -196,10 +210,11 @@ fun GameScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Fixed size board container - fills available space
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(bottom = 72.dp), // Reserve space for button
+                    .padding(bottom = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
                 if (state.isLoading) {
@@ -216,58 +231,55 @@ fun GameScreen(
                                 label = "solvedScale"
                             )
 
+                            // Fixed size for solved image with dark border
                             Box(
                                 modifier = Modifier
-                                    .size(
-                                        width = with(density) { boardSize.width.toDp() },
-                                        height = with(density) { boardSize.height.toDp() }
-                                    )
+                                    .width(370.dp)
+                                    .height(580.dp)
                                     .graphicsLayer {
                                         this.scaleX = scale
                                         this.scaleY = scale
                                     }
-                                    .background(Color.Black)
-                                    .padding(4.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color.White) // White border (same as pieces)
+                                    .padding(1.dp) // Border thickness (same as pieces)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF2E7D32))
                             ) {
-                                Image(
-                                    bitmap = bitmap.asImageBitmap(),
-                                    contentDescription = "Solved Puzzle",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.FillBounds
-                                )
+                                SolvedPuzzleWithGrid(bitmap = bitmap, rows = state.rows, cols = state.cols)
                             }
                         } else {
-                            DraggablePuzzleGrid(
-                                state = state,
-                                bitmap = bitmap,
-                                onUnitMove = vm::onUnitMoveCompleted,
-                                onSizeChanged = { size ->
-                                    if (boardSize != size) {
-                                        boardSize = size
-                                        val widthDp = with(density) { size.width.toDp() }
-                                        val heightDp = with(density) { size.height.toDp() }
-                                        DebugConfig.d("PuzzleBoard", "Board Size: ${size.width}px × ${size.height}px (${widthDp} × ${heightDp})")
-                                    }
-                                },
-                                onDragStart = { triggerVibration() }
-                            )
+                            // Fixed size for puzzle board
+                            Box(
+                                modifier = Modifier
+                                    .width(370.dp)
+                                    .height(580.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                DraggablePuzzleGrid(
+                                    state = state,
+                                    bitmap = bitmap,
+                                    onUnitMove = vm::onUnitMoveCompleted,
+                                    onDragStart = { triggerVibration() }
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            // Fixed space for button (always present, visible or not)
+            // Fixed space for button (reduced padding)
             Box(
-                modifier = Modifier.height(72.dp),
+                modifier = Modifier.height(64.dp),
                 contentAlignment = Alignment.Center
             ) {
                 if (state.isSolved) {
                     Button(
                         onClick = onNextLevel,
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
                         shape = RoundedCornerShape(16.dp)
                     ) {
-                        Text(if (level < 20) "Next Level" else "Back to Map", fontSize = 18.sp)
+                        Text(if (level < LevelPaths.TOTAL_LEVELS) "Next Level" else "Back to Map", fontSize = 18.sp)
                     }
                 }
             }
@@ -282,7 +294,7 @@ fun GameScreen(
                 onDismiss = { showGameSettings.value = false },
                 onRestart = {
                     showGameSettings.value = false
-                    vm.loadNewGame(context)
+                    vm.restartCurrentGame()
                 },
                 onHome = {
                     showGameSettings.value = false
@@ -428,9 +440,8 @@ fun GameSettingsDialog(onDismiss: () -> Unit, onRestart: () -> Unit, onHome: () 
 fun ConfettiCelebration() {
     var showConfetti by remember { mutableStateOf(true) }
 
-    // Hide confetti after 10 seconds
     LaunchedEffect(Unit) {
-        delay(10000) // 10 seconds
+        delay(10000)
         showConfetti = false
     }
 
@@ -483,7 +494,6 @@ fun DraggablePuzzleGrid(
     state: GameState,
     bitmap: Bitmap,
     onUnitMove: (Int, Int) -> Unit,
-    onSizeChanged: (IntSize) -> Unit = {},
     onDragStart: () -> Unit = {}
 ) {
     var gridSize by remember { mutableStateOf(IntSize.Zero) }
@@ -494,6 +504,9 @@ fun DraggablePuzzleGrid(
     var shouldFlip by remember { mutableStateOf(false) }
     var animationComplete by remember { mutableStateOf(false) }
     val density = LocalDensity.current
+
+    val rows = state.rows
+    val cols = state.cols
 
     LaunchedEffect(state.pieces.size) {
         if (state.pieces.isNotEmpty() && !animationComplete) {
@@ -512,31 +525,46 @@ fun DraggablePuzzleGrid(
     }
 
     Box(
-        modifier = Modifier.fillMaxSize().background(Color(0xFF4CAF50)).padding(4.dp)
-            .onGloballyPositioned { gridSize = it.size; onSizeChanged(it.size) }
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Transparent)
+            .onGloballyPositioned { gridSize = it.size }
     ) {
         if (gridSize != IntSize.Zero) {
-            val cellWidth = gridSize.width / 3
-            val cellHeight = gridSize.height / 3
+            val cellWidth = gridSize.width / cols
+            val cellHeight = gridSize.height / rows
 
-            for (row in 0..2) {
-                for (col in 0..2) {
+            // Draw background grid cells (dark green blocks touching each other)
+            for (row in 0 until rows) {
+                for (col in 0 until cols) {
                     Box(
-                        modifier = Modifier.offset { IntOffset(col * cellWidth, row * cellHeight) }
-                            .size(with(density) { cellWidth.toDp() }, with(density) { cellHeight.toDp() })
-                            .padding(1.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF388E3C))
+                        modifier = Modifier
+                            .offset { IntOffset(col * cellWidth, row * cellHeight) }
+                            .size(
+                                with(density) { cellWidth.toDp() },
+                                with(density) { cellHeight.toDp() }
+                            )
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF2E7D32))
                     )
                 }
             }
 
+            // Draw puzzle pieces
             state.pieces.forEachIndexed { index, piece ->
                 val isPartOfDraggingUnit = draggingUnitId == piece.unitId
-                val baseOffset = IntOffset((piece.currentPos % 3) * cellWidth, (piece.currentPos / 3) * cellHeight)
+                val baseOffset = IntOffset(
+                    (piece.currentPos % cols) * cellWidth,
+                    (piece.currentPos / cols) * cellHeight
+                )
                 val targetOffset = if (isPartOfDraggingUnit && isDragging) baseOffset + dragOffset else baseOffset
 
                 val animatedOffset by animateIntOffsetAsState(
                     targetValue = targetOffset,
-                    animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    ),
                     label = "offset"
                 )
 
@@ -544,7 +572,10 @@ fun DraggablePuzzleGrid(
                 val isVisible = index < visiblePiecesCount
                 val scale by animateFloatAsState(
                     targetValue = if (isVisible) 1f else 0f,
-                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    ),
                     label = "scale"
                 )
                 val alpha by animateFloatAsState(
@@ -558,12 +589,33 @@ fun DraggablePuzzleGrid(
                     label = "flip"
                 )
 
-                val hasRight = state.pieces.any { it.unitId == piece.unitId && it.originalCol == piece.originalCol + 1 && it.originalRow == piece.originalRow && it.currentPos == piece.currentPos + 1 }
-                val hasBottom = state.pieces.any { it.unitId == piece.unitId && it.originalRow == piece.originalRow + 1 && it.originalCol == piece.originalCol && it.currentPos == piece.currentPos + 3 }
-                val hasLeft = state.pieces.any { it.unitId == piece.unitId && it.originalCol == piece.originalCol - 1 && it.originalRow == piece.originalRow && it.currentPos == piece.currentPos - 1 }
-                val hasTop = state.pieces.any { it.unitId == piece.unitId && it.originalRow == piece.originalRow - 1 && it.originalCol == piece.originalCol && it.currentPos == piece.currentPos - 3 }
+                // Check for merged neighbors
+                val hasRight = state.pieces.any {
+                    it.unitId == piece.unitId &&
+                            it.originalCol == piece.originalCol + 1 &&
+                            it.originalRow == piece.originalRow &&
+                            it.currentPos == piece.currentPos + 1
+                }
+                val hasBottom = state.pieces.any {
+                    it.unitId == piece.unitId &&
+                            it.originalRow == piece.originalRow + 1 &&
+                            it.originalCol == piece.originalCol &&
+                            it.currentPos == piece.currentPos + cols
+                }
+                val hasLeft = state.pieces.any {
+                    it.unitId == piece.unitId &&
+                            it.originalCol == piece.originalCol - 1 &&
+                            it.originalRow == piece.originalRow &&
+                            it.currentPos == piece.currentPos - 1
+                }
+                val hasTop = state.pieces.any {
+                    it.unitId == piece.unitId &&
+                            it.originalRow == piece.originalRow - 1 &&
+                            it.originalCol == piece.originalCol &&
+                            it.currentPos == piece.currentPos - cols
+                }
 
-                val cornerRadius = 8.dp
+                val cornerRadius = 6.dp
                 val shape = remember(hasTop, hasRight, hasBottom, hasLeft) {
                     RoundedCornerShape(
                         topStart = if (hasTop || hasLeft) 0.dp else cornerRadius,
@@ -573,15 +625,40 @@ fun DraggablePuzzleGrid(
                     )
                 }
 
-                val gapSize = 1.dp
+                val outerPadding = 0.3.dp
+                val borderWidth = 1.dp
 
                 Box(
-                    modifier = Modifier.offset { displayOffset }
-                        .graphicsLayer { this.scaleX = scale; this.scaleY = scale; this.alpha = alpha; this.rotationY = rotationY; this.cameraDistance = 12f * this.density }
+                    modifier = Modifier
+                        .offset { displayOffset }
+                        .graphicsLayer {
+                            this.scaleX = scale
+                            this.scaleY = scale
+                            this.alpha = alpha
+                            this.rotationY = rotationY
+                            this.cameraDistance = 12f * this.density
+                        }
                         .zIndex(if (isPartOfDraggingUnit) 1f else 0f)
-                        .size(with(density) { cellWidth.toDp() }, with(density) { cellHeight.toDp() })
-                        .padding(end = if (!hasRight) gapSize else 0.dp, bottom = if (!hasBottom) gapSize else 0.dp, start = if (!hasLeft) gapSize else 0.dp, top = if (!hasTop) gapSize else 0.dp)
-                        .shadow(if (isPartOfDraggingUnit) 12.dp else 0.dp, shape).clip(shape)
+                        .size(
+                            with(density) { cellWidth.toDp() },
+                            with(density) { cellHeight.toDp() }
+                        )
+                        .padding(
+                            end = if (!hasRight) outerPadding else 0.dp,
+                            bottom = if (!hasBottom) outerPadding else 0.dp,
+                            start = if (!hasLeft) outerPadding else 0.dp,
+                            top = if (!hasTop) outerPadding else 0.dp
+                        )
+                        .shadow(if (isPartOfDraggingUnit) 12.dp else 0.dp, shape)
+                        .clip(shape)
+                        .background(Color.White) // White border
+                        .padding(
+                            end = if (!hasRight) borderWidth else 0.dp,
+                            bottom = if (!hasBottom) borderWidth else 0.dp,
+                            start = if (!hasLeft) borderWidth else 0.dp,
+                            top = if (!hasTop) borderWidth else 0.dp
+                        )
+                        .clip(shape)
                         .pointerInput(piece.unitId, animationComplete) {
                             if (animationComplete) {
                                 detectDragGestures(
@@ -594,24 +671,37 @@ fun DraggablePuzzleGrid(
                                         val unitId = draggingUnitId ?: return@detectDragGestures
                                         val deltaX = (dragOffset.x.toFloat() / cellWidth).roundToInt()
                                         val deltaY = (dragOffset.y.toFloat() / cellHeight).roundToInt()
-                                        val totalDelta = (deltaY * 3) + deltaX
+                                        val totalDelta = (deltaY * cols) + deltaX
                                         onUnitMove(unitId, totalDelta)
-                                        draggingUnitId = null; dragOffset = IntOffset.Zero; isDragging = false
+                                        draggingUnitId = null
+                                        dragOffset = IntOffset.Zero
+                                        isDragging = false
                                     },
-                                    onDragCancel = { draggingUnitId = null; dragOffset = IntOffset.Zero; isDragging = false },
-                                    onDrag = { change, amount -> change.consume(); dragOffset += IntOffset(amount.x.roundToInt(), amount.y.roundToInt()) }
+                                    onDragCancel = {
+                                        draggingUnitId = null
+                                        dragOffset = IntOffset.Zero
+                                        isDragging = false
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        dragOffset += IntOffset(amount.x.roundToInt(), amount.y.roundToInt())
+                                    }
                                 )
                             }
                         }
                 ) {
                     if (rotationY > 90f) {
                         Box(
-                            modifier = Modifier.fillMaxSize().background(Color(0xFF2196F3))
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF2196F3))
                                 .graphicsLayer { this.rotationY = 180f },
                             contentAlignment = Alignment.Center
-                        ) { Text(text = "?", color = Color.White, fontSize = 32.sp) }
+                        ) {
+                            Text(text = "?", color = Color.White, fontSize = 32.sp)
+                        }
                     } else {
-                        PuzzlePieceImage(piece, bitmap)
+                        PuzzlePieceImage(piece, bitmap, state)
                     }
                 }
             }
@@ -620,15 +710,37 @@ fun DraggablePuzzleGrid(
 }
 
 @Composable
-fun PuzzlePieceImage(piece: PuzzlePiece, fullBitmap: Bitmap) {
-    val pw = fullBitmap.width / 3
-    val ph = fullBitmap.height / 3
-    val cropped = remember(piece.id, fullBitmap) {
+fun PuzzlePieceImage(piece: PuzzlePiece, fullBitmap: Bitmap, gameState: GameState) {
+    val pw = fullBitmap.width / gameState.cols
+    val ph = fullBitmap.height / gameState.rows
+    val cropped = remember(piece.id, fullBitmap, gameState.rows, gameState.cols) {
         try {
-            Bitmap.createBitmap(fullBitmap, piece.originalCol * pw, piece.originalRow * ph, pw, ph).asImageBitmap()
+            Bitmap.createBitmap(
+                fullBitmap,
+                piece.originalCol * pw,
+                piece.originalRow * ph,
+                pw,
+                ph
+            ).asImageBitmap()
         } catch (e: Exception) {
             Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888).asImageBitmap()
         }
     }
-    Image(bitmap = cropped, contentDescription = null, contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
+    Image(
+        bitmap = cropped,
+        contentDescription = null,
+        contentScale = ContentScale.FillBounds,
+        modifier = Modifier.fillMaxSize()
+    )
+}
+
+@Composable
+fun SolvedPuzzleWithGrid(bitmap: Bitmap, rows: Int, cols: Int) {
+    // Display the complete solved image without any grid lines
+    Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = "Solved Puzzle",
+        modifier = Modifier.fillMaxSize(),
+        contentScale = ContentScale.FillBounds
+    )
 }

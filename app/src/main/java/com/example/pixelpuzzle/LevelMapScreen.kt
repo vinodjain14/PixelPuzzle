@@ -1,92 +1,153 @@
 package com.example.pixelpuzzle
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.zIndex
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
+import kotlin.math.sin
 
 @Composable
-fun LevelMapScreen(onLevelClick: (Int) -> Unit) {
+fun LevelMapScreen(
+    onLevelClick: (Int) -> Unit,
+    viewModel: LevelMapViewModel = viewModel()
+) {
     val context = LocalContext.current
+    val mapState by viewModel.state.collectAsState()
     val unlockedLevels = remember { mutableStateOf(GamePreferences.getUnlockedLevels(context)) }
     val selectedLevel = remember { mutableStateOf(unlockedLevels.value) }
     val showSettings = remember { mutableStateOf(false) }
     val totalPoints = remember { mutableStateOf(GamePreferences.getTotalPoints(context)) }
 
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+
     LaunchedEffect(Unit) {
+        viewModel.loadBackgroundImage(context)
         unlockedLevels.value = GamePreferences.getUnlockedLevels(context)
         selectedLevel.value = unlockedLevels.value
         totalPoints.value = GamePreferences.getTotalPoints(context)
+
+        // Scroll to current level
+        val currentLevelIndex = unlockedLevels.value - 1
+        if (currentLevelIndex > 0) {
+            listState.scrollToItem(maxOf(0, currentLevelIndex - 2))
+        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
+            .background(Color(0xFF1A1A2E))
     ) {
+        // Background Image with overlay
+        mapState.backgroundBitmap?.let { bitmap ->
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Background",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(8.dp),
+                contentScale = ContentScale.Crop
+            )
+
+            // Dark overlay for better readability
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.7f),
+                                Color.Black.copy(alpha = 0.85f),
+                                Color.Black.copy(alpha = 0.9f)
+                            )
+                        )
+                    )
+            )
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier = Modifier.width(48.dp))
-
-                Text(
-                    text = "Pixel Puzzle",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Black
-                )
+                Column {
+                    Text(
+                        text = "Pixel Puzzle",
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Points: ${totalPoints.value}",
+                        fontSize = 14.sp,
+                        color = Color(0xFFFFD700)
+                    )
+                }
 
                 IconButton(onClick = { showSettings.value = true }) {
                     Icon(
                         imageVector = Icons.Default.Settings,
                         contentDescription = "Settings",
-                        tint = Color(0xFF6650a4),
+                        tint = Color.White,
                         modifier = Modifier.size(28.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(4),
+            // Level Path with scrolling
+            LazyColumn(
                 modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                state = listState,
+                horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(20) { index ->
+                items(LevelPaths.TOTAL_LEVELS) { index ->
                     val level = index + 1
                     val isUnlocked = level <= unlockedLevels.value
+                    val isCurrent = level == unlockedLevels.value
                     val isSelected = level == selectedLevel.value
 
-                    LevelBox(
+                    LevelPathNode(
                         level = level,
                         isUnlocked = isUnlocked,
+                        isCurrent = isCurrent,
                         isSelected = isSelected,
                         onClick = {
                             if (isUnlocked) {
@@ -99,16 +160,24 @@ fun LevelMapScreen(onLevelClick: (Int) -> Unit) {
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // Play Button
             Button(
                 onClick = { onLevelClick(selectedLevel.value) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6650a4)),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF6650a4),
+                    disabledContainerColor = Color.Gray
+                ),
                 enabled = selectedLevel.value <= unlockedLevels.value
             ) {
-                Text("Play Level ${selectedLevel.value}", fontSize = 18.sp)
+                Text(
+                    text = "Play Level ${selectedLevel.value}",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
@@ -119,43 +188,118 @@ fun LevelMapScreen(onLevelClick: (Int) -> Unit) {
 }
 
 @Composable
-fun LevelBox(
+fun LevelPathNode(
     level: Int,
     isUnlocked: Boolean,
+    isCurrent: Boolean,
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    Box(
+    Row(
         modifier = Modifier
-            .aspectRatio(1f)
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (isSelected) Color(0xFF6650a4)
-                else if (isUnlocked) Color(0xFFE8DEF8)
-                else Color(0xFFEEEEEE)
-            )
-            .border(
-                width = if (isSelected) 3.dp else 0.dp,
-                color = Color(0xFF6650a4),
-                shape = RoundedCornerShape(12.dp)
-            )
-            .clickable(enabled = isUnlocked, onClick = onClick),
-        contentAlignment = Alignment.Center
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp),
+        horizontalArrangement = if (level % 2 == 0) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        if (isUnlocked) {
-            Text(
-                text = level.toString(),
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (isSelected) Color.White else Color(0xFF6650a4)
-            )
-        } else {
-            Icon(
-                imageVector = Icons.Default.Lock,
-                contentDescription = "Locked",
-                tint = Color.Gray,
-                modifier = Modifier.size(32.dp)
-            )
+        // Connecting path line
+        if (level > 1) {
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
+        // Level Node
+        Box(
+            modifier = Modifier
+                .size(if (isCurrent) 80.dp else 64.dp)
+                .clip(CircleShape)
+                .background(
+                    when {
+                        isCurrent -> Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFFFFD700),
+                                Color(0xFFFFA500)
+                            )
+                        )
+                        isSelected -> Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFF6650a4),
+                                Color(0xFF4A3F7A)
+                            )
+                        )
+                        isUnlocked -> Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFFE8DEF8),
+                                Color(0xFFD0BCFF)
+                            )
+                        )
+                        else -> Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFF4A4A4A),
+                                Color(0xFF2A2A2A)
+                            )
+                        )
+                    }
+                )
+                .border(
+                    width = if (isSelected || isCurrent) 4.dp else 2.dp,
+                    color = if (isCurrent) Color(0xFFFFD700) else if (isSelected) Color.White else Color.Transparent,
+                    shape = CircleShape
+                )
+                .clickable(enabled = isUnlocked, onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isCurrent) {
+                // Current level - Show pin icon
+                Icon(
+                    imageVector = Icons.Default.LocationOn,
+                    contentDescription = "Current Level",
+                    tint = Color.White,
+                    modifier = Modifier.size(40.dp)
+                )
+            } else if (isUnlocked) {
+                // Unlocked level - Show number
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = level.toString(),
+                        fontSize = if (isCurrent) 28.sp else 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isSelected) Color.White else Color(0xFF6650a4)
+                    )
+                    Text(
+                        text = getDifficultyForLevel(level).displayName,
+                        fontSize = 8.sp,
+                        color = if (isSelected) Color.White.copy(alpha = 0.8f) else Color(0xFF6650a4).copy(alpha = 0.8f)
+                    )
+                }
+            } else {
+                // Locked level
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Locked",
+                    tint = Color.Gray,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        }
+
+        // Level info label
+        if (isCurrent) {
+            Spacer(modifier = Modifier.width(16.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFFFD700).copy(alpha = 0.9f),
+                modifier = Modifier.padding(4.dp)
+            ) {
+                Text(
+                    text = "Current Level",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black
+                )
+            }
         }
     }
 }

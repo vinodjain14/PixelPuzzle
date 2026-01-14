@@ -8,6 +8,7 @@ import coil.ImageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,83 +26,140 @@ class PuzzleViewModel : ViewModel() {
     private var fullBitmap: Bitmap? = null
     private val accessKey = "oZS1ybE8EnX5SOSvsQ50noM-zOEaxsIthml15U36Mk8"
     private var nextAvailableUnitId = 0
+    private var currentImageUrl: String? = null // Store current image URL for restart
 
     companion object {
         private const val TAG = "PuzzleViewModel"
     }
 
-    fun loadNewGame(context: android.content.Context) {
+    fun loadNewGame(context: android.content.Context, level: Int = 1) {
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, isSolved = false)
+            val difficulty = getDifficultyForLevel(level)
+            val rows = difficulty.rows
+            val cols = difficulty.cols
+            val totalPieces = rows * cols
+
+            _state.value = _state.value.copy(
+                isLoading = true,
+                isSolved = false,
+                rows = rows,
+                cols = cols
+            )
+
             val directImageUrl = fetchUnsplashImageUrl()
             if (directImageUrl == null) {
                 _state.value = _state.value.copy(isLoading = false)
                 return@launch
             }
 
-            val loader = ImageLoader(context)
-            val request = ImageRequest.Builder(context)
-                .data(directImageUrl)
-                .allowHardware(false)
-                .crossfade(true)
-                .build()
+            // Store the image URL for restart functionality
+            currentImageUrl = directImageUrl
 
-            try {
-                val result = (loader.execute(request) as? SuccessResult)?.drawable
-                fullBitmap = (result as? BitmapDrawable)?.bitmap
+            loadImageAndCreatePuzzle(context, directImageUrl, rows, cols, totalPieces, level)
+        }
+    }
 
-                if (fullBitmap != null) {
-                    val initialPieces = List(9) { i ->
-                        PuzzlePiece(id = i, originalRow = i / 3, originalCol = i % 3, currentPos = i)
-                    }
-                    val shuffledIndices = (0..8).shuffled()
-                    val shuffledPieces = initialPieces.mapIndexed { index, piece ->
-                        piece.copy(currentPos = shuffledIndices[index], unitId = piece.id)
-                    }
-
-                    nextAvailableUnitId = 9
-                    _state.value = _state.value.copy(pieces = shuffledPieces, isLoading = false)
-
-                    DebugConfig.d(TAG, "=== NEW GAME LOADED ===")
-                    DebugConfig.d(TAG, "Initial shuffled positions: ${shuffledPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
-                }
-            } catch (e: Exception) {
+    fun restartCurrentGame() {
+        viewModelScope.launch {
+            val currentUrl = currentImageUrl
+            if (currentUrl == null || fullBitmap == null) {
                 _state.value = _state.value.copy(isLoading = false)
-                DebugConfig.e(TAG, "Error loading game", e)
+                return@launch
             }
+
+            val rows = _state.value.rows
+            val cols = _state.value.cols
+            val totalPieces = rows * cols
+
+            _state.value = _state.value.copy(
+                isLoading = true,
+                isSolved = false
+            )
+
+            // Add a small delay for visual feedback
+            delay(300)
+
+            // Reshuffle the existing puzzle
+            val initialPieces = List(totalPieces) { i ->
+                PuzzlePiece(
+                    id = i,
+                    originalRow = i / cols,
+                    originalCol = i % cols,
+                    currentPos = i
+                )
+            }
+
+            val shuffledIndices = (0 until totalPieces).shuffled()
+            val shuffledPieces = initialPieces.mapIndexed { index, piece ->
+                piece.copy(currentPos = shuffledIndices[index], unitId = piece.id)
+            }
+
+            nextAvailableUnitId = totalPieces
+            _state.value = _state.value.copy(pieces = shuffledPieces, isLoading = false)
+
+            DebugConfig.d(TAG, "=== GAME RESTARTED (${rows}×${cols}) ===")
+            DebugConfig.d(TAG, "Reshuffled positions: ${shuffledPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
+        }
+    }
+
+    private suspend fun loadImageAndCreatePuzzle(
+        context: android.content.Context,
+        imageUrl: String,
+        rows: Int,
+        cols: Int,
+        totalPieces: Int,
+        level: Int
+    ) {
+        val loader = ImageLoader(context)
+        val request = ImageRequest.Builder(context)
+            .data(imageUrl)
+            .allowHardware(false)
+            .crossfade(true)
+            .build()
+
+        try {
+            val result = (loader.execute(request) as? SuccessResult)?.drawable
+            fullBitmap = (result as? BitmapDrawable)?.bitmap
+
+            if (fullBitmap != null) {
+                val initialPieces = List(totalPieces) { i ->
+                    PuzzlePiece(
+                        id = i,
+                        originalRow = i / cols,
+                        originalCol = i % cols,
+                        currentPos = i
+                    )
+                }
+
+                val shuffledIndices = (0 until totalPieces).shuffled()
+                val shuffledPieces = initialPieces.mapIndexed { index, piece ->
+                    piece.copy(currentPos = shuffledIndices[index], unitId = piece.id)
+                }
+
+                nextAvailableUnitId = totalPieces
+                _state.value = _state.value.copy(pieces = shuffledPieces, isLoading = false)
+
+                DebugConfig.d(TAG, "=== NEW GAME LOADED (Level $level - ${rows}×${cols}) ===")
+                DebugConfig.d(TAG, "Initial shuffled positions: ${shuffledPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
+            }
+        } catch (e: Exception) {
+            _state.value = _state.value.copy(isLoading = false)
+            DebugConfig.e(TAG, "Error loading game", e)
         }
     }
 
     private suspend fun fetchUnsplashImageUrl(): String? = withContext(Dispatchers.IO) {
         try {
-            // Random image categories for variety
             val categories = listOf(
-                "abstract",
-                "nature",
-                "architecture",
-                "patterns",
-                "textures",
-                "colors",
-                "geometric",
-                "landscape",
-                "minimal",
-                "gradient",
-                "flowers",
-                "animals",
-                "food",
-                "technology",
-                "space",
-                "ocean",
-                "mountains",
-                "city",
-                "art",
-                "sky"
+                "abstract", "nature", "architecture", "patterns", "textures",
+                "colors", "geometric", "landscape", "minimal", "gradient",
+                "flowers", "animals", "food", "technology", "space",
+                "ocean", "mountains", "city", "art", "sky"
             )
 
             val randomCategory = categories.random()
             DebugConfig.d(TAG, "Fetching image category: $randomCategory")
 
-            // Request square images with random category
             val apiUrl = "https://api.unsplash.com/photos/random?client_id=$accessKey&query=$randomCategory&orientation=squarish"
             val url = URL(apiUrl)
             val connection = url.openConnection() as HttpURLConnection
@@ -117,9 +175,13 @@ class PuzzleViewModel : ViewModel() {
     }
 
     fun onUnitMoveCompleted(unitId: Int, deltaPos: Int) {
+        val currentState = _state.value
+        val rows = currentState.rows
+        val cols = currentState.cols
+
         DebugConfig.d(TAG, "")
         DebugConfig.d(TAG, "========================================")
-        DebugConfig.d(TAG, "MOVE ATTEMPTED: Unit $unitId, Delta: $deltaPos")
+        DebugConfig.d(TAG, "MOVE ATTEMPTED: Unit $unitId, Delta: $deltaPos (Grid: ${rows}×${cols})")
 
         if (deltaPos == 0) {
             DebugConfig.d(TAG, "MOVE CANCELLED: Delta is 0 (no movement)")
@@ -127,7 +189,7 @@ class PuzzleViewModel : ViewModel() {
             return
         }
 
-        val currentPieces = _state.value.pieces
+        val currentPieces = currentState.pieces
         val movingPieces = currentPieces.filter { it.unitId == unitId }
 
         DebugConfig.d(TAG, "Moving pieces: ${movingPieces.map { "Piece ${it.id} at pos ${it.currentPos}" }}")
@@ -136,19 +198,20 @@ class PuzzleViewModel : ViewModel() {
         var validMove = true
 
         for (piece in movingPieces) {
-            val currentRow = piece.currentPos / 3
-            val currentCol = piece.currentPos % 3
+            val currentRow = piece.currentPos / cols
+            val currentCol = piece.currentPos % cols
             val newPos = piece.currentPos + deltaPos
 
-            if (newPos !in 0..8) {
+            if (newPos !in 0..currentState.maxPosition) {
                 validMove = false
                 DebugConfig.d(TAG, "MOVE INVALID: Piece ${piece.id} would move out of bounds (pos ${piece.currentPos} -> $newPos)")
                 break
             }
 
+            // Check for horizontal wrapping (moving left/right)
             if (abs(deltaPos) == 1) {
-                val newRow = newPos / 3
-                val newCol = newPos % 3
+                val newRow = newPos / cols
+                val newCol = newPos % cols
 
                 if (currentRow == newRow) {
                     if (abs(currentCol - newCol) != 1) {
@@ -213,12 +276,14 @@ class PuzzleViewModel : ViewModel() {
         }
 
         DebugConfig.d(TAG, "Checking for invalid merges...")
-        val brokenPieces = breakInvalidMerges(nextPieces)
+        val brokenPieces = breakInvalidMerges(nextPieces, currentState)
 
         DebugConfig.d(TAG, "Checking for new merges...")
-        val mergedPieces = checkMerges(brokenPieces)
+        val mergedPieces = checkMerges(brokenPieces, currentState)
 
-        val isSolved = mergedPieces.all { it.currentPos == (it.originalRow * 3 + it.originalCol) }
+        val isSolved = mergedPieces.all {
+            it.currentPos == (it.originalRow * cols + it.originalCol)
+        }
 
         DebugConfig.d(TAG, "Final state: ${mergedPieces.map { "Piece ${it.id} (Unit ${it.unitId}) at pos ${it.currentPos}" }}")
         DebugConfig.d(TAG, "Puzzle solved: $isSolved")
@@ -227,9 +292,10 @@ class PuzzleViewModel : ViewModel() {
         _state.value = _state.value.copy(pieces = mergedPieces, isSolved = isSolved)
     }
 
-    private fun breakInvalidMerges(pieces: List<PuzzlePiece>): List<PuzzlePiece> {
+    private fun breakInvalidMerges(pieces: List<PuzzlePiece>, gameState: GameState): List<PuzzlePiece> {
         val result = pieces.toMutableList()
         val unitGroups = result.groupBy { it.unitId }
+        val cols = gameState.cols
 
         for ((unitId, unitPieces) in unitGroups) {
             if (unitPieces.size <= 1) continue
@@ -247,10 +313,10 @@ class PuzzleViewModel : ViewModel() {
 
                     if (!isLogicalNeighbor) continue
 
-                    val r1 = piece.currentPos / 3
-                    val c1 = piece.currentPos % 3
-                    val r2 = otherPiece.currentPos / 3
-                    val c2 = otherPiece.currentPos % 3
+                    val r1 = piece.currentPos / cols
+                    val c1 = piece.currentPos % cols
+                    val r2 = otherPiece.currentPos / cols
+                    val c2 = otherPiece.currentPos % cols
                     val isPhysicalNeighbor = (abs(r1 - r2) == 1 && c1 == c2) || (abs(c1 - c2) == 1 && r1 == r2)
 
                     if (!isPhysicalNeighbor) continue
@@ -286,10 +352,11 @@ class PuzzleViewModel : ViewModel() {
         return result
     }
 
-    private fun checkMerges(pieces: List<PuzzlePiece>): List<PuzzlePiece> {
+    private fun checkMerges(pieces: List<PuzzlePiece>, gameState: GameState): List<PuzzlePiece> {
         val result = pieces.toMutableList()
         var changed = true
         var mergeCount = 0
+        val cols = gameState.cols
 
         while (changed) {
             changed = false
@@ -302,8 +369,10 @@ class PuzzleViewModel : ViewModel() {
                         val isLogicalNeighbor = (abs(p1.originalRow - p2.originalRow) == 1 && p1.originalCol == p2.originalCol) ||
                                 (abs(p1.originalCol - p2.originalCol) == 1 && p1.originalRow == p2.originalRow)
 
-                        val r1 = p1.currentPos / 3; val c1 = p1.currentPos % 3
-                        val r2 = p2.currentPos / 3; val c2 = p2.currentPos % 3
+                        val r1 = p1.currentPos / cols
+                        val c1 = p1.currentPos % cols
+                        val r2 = p2.currentPos / cols
+                        val c2 = p2.currentPos % cols
                         val isPhysicalNeighbor = (abs(r1 - r2) == 1 && c1 == c2) || (abs(c1 - c2) == 1 && r1 == r2)
 
                         if (isLogicalNeighbor && isPhysicalNeighbor) {
