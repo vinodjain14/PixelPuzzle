@@ -15,6 +15,7 @@ object GamePreferences {
     private const val KEY_MUSIC_ENABLED = "music_enabled"
     private const val KEY_SOUND_ENABLED = "sound_enabled"
     private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
+    private const val KEY_USED_IMAGE_IDS = "used_image_ids"
     private const val THUMBNAILS_DIR = "level_thumbnails"
 
     private fun getPrefs(context: Context): SharedPreferences {
@@ -122,5 +123,21 @@ object GamePreferences {
         }
 
         return thumbnails
+    }
+
+    // Used image IDs tracking to avoid repeats
+    fun addUsedImageId(context: Context, imageId: String) {
+        val usedIds = getUsedImageIds(context).toMutableSet()
+        usedIds.add(imageId)
+        getPrefs(context).edit().putStringSet(KEY_USED_IMAGE_IDS, usedIds).apply()
+        DebugConfig.d("GamePreferences", "Added used image ID: $imageId (Total: ${usedIds.size})")
+    }
+
+    fun getUsedImageIds(context: Context): Set<String> {
+        return getPrefs(context).getStringSet(KEY_USED_IMAGE_IDS, emptySet()) ?: emptySet()
+    }
+
+    fun isImageIdUsed(context: Context, imageId: String): Boolean {
+        return getUsedImageIds(context).contains(imageId)
     }
 }

@@ -82,7 +82,7 @@ object LevelPaths {
         LevelPath(51, 100, "Master Journey")
     )
 
-    const val TOTAL_LEVELS = 100
+    const val TOTAL_LEVELS = 10000
 
     fun getPathForLevel(level: Int): LevelPath? {
         return paths.find { level in it.levels }

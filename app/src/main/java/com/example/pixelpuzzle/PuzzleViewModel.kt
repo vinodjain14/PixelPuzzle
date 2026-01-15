@@ -46,16 +46,49 @@ class PuzzleViewModel : ViewModel() {
                 cols = cols
             )
 
-            val directImageUrl = fetchUnsplashImageUrl()
-            if (directImageUrl == null) {
+            // Fetch image with retry logic to avoid repeats
+            var imageIdAndUrl: String? = null
+            val maxRetries = 15
+            var retries = 0
+
+            while (retries < maxRetries) {
+                val result = fetchUnsplashImageUrl()
+                if (result != null) {
+                    val parts = result.split("|")
+                    if (parts.size == 2) {
+                        val imageId = parts[0]
+                        val imageUrl = parts[1]
+
+                        if (!GamePreferences.isImageIdUsed(context, imageId)) {
+                            // Found an unused image
+                            GamePreferences.addUsedImageId(context, imageId)
+                            imageIdAndUrl = imageUrl
+                            DebugConfig.d(TAG, "Selected unused image: $imageId")
+                            break
+                        } else {
+                            DebugConfig.d(TAG, "Image $imageId already used, fetching another...")
+                        }
+                    }
+                }
+                retries++
+                delay(300)
+            }
+
+            if (imageIdAndUrl == null) {
+                DebugConfig.w(TAG, "Could not find unused image after $maxRetries retries, using any image")
+                val fallback = fetchUnsplashImageUrl()
+                imageIdAndUrl = fallback?.split("|")?.getOrNull(1)
+            }
+
+            if (imageIdAndUrl == null) {
                 _state.value = _state.value.copy(isLoading = false)
                 return@launch
             }
 
             // Store the image URL for restart functionality
-            currentImageUrl = directImageUrl
+            currentImageUrl = imageIdAndUrl
 
-            loadImageAndCreatePuzzle(context, directImageUrl, rows, cols, totalPieces, level)
+            loadImageAndCreatePuzzle(context, imageIdAndUrl, rows, cols, totalPieces, level)
         }
     }
 
@@ -158,16 +191,35 @@ class PuzzleViewModel : ViewModel() {
             )
 
             val randomCategory = categories.random()
-            DebugConfig.d(TAG, "Fetching image category: $randomCategory")
+            val maxAttempts = 10
+            var attempts = 0
 
-            val apiUrl = "https://api.unsplash.com/photos/random?client_id=$accessKey&query=$randomCategory&orientation=squarish"
-            val url = URL(apiUrl)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            if (connection.responseCode == 200) {
-                val response = connection.inputStream.bufferedReader().use { it.readText() }
-                JSONObject(response).getJSONObject("urls").getString("regular")
-            } else null
+            while (attempts < maxAttempts) {
+                attempts++
+                DebugConfig.d(TAG, "Fetching image category: $randomCategory (Attempt $attempts)")
+
+                val apiUrl = "https://api.unsplash.com/photos/random?client_id=$accessKey&query=$randomCategory&orientation=squarish"
+                val url = URL(apiUrl)
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val jsonObject = JSONObject(response)
+                    val imageId = jsonObject.getString("id")
+                    val imageUrl = jsonObject.getJSONObject("urls").getString("regular")
+
+                    // Check if this image has been used before
+                    // Note: context needs to be passed, we'll handle this in the calling function
+                    DebugConfig.d(TAG, "Found image ID: $imageId")
+                    return@withContext "$imageId|$imageUrl" // Return both ID and URL
+                }
+
+                delay(500) // Small delay between attempts
+            }
+
+            DebugConfig.w(TAG, "Could not find unused image after $maxAttempts attempts")
+            null
         } catch (e: Exception) {
             DebugConfig.e(TAG, "Error fetching Unsplash image", e)
             null

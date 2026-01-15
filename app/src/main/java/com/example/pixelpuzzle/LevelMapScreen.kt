@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -48,15 +50,40 @@ fun LevelMapScreen(
     val showSettings = remember { mutableStateOf(false) }
     val totalPoints = remember { mutableStateOf(GamePreferences.getTotalPoints(context)) }
 
+    // Animation state for moving pin
+    var showMovingPin by remember { mutableStateOf(false) }
+    var animationProgress by remember { mutableStateOf(0f) }
+    val previousLevel = remember { mutableStateOf(maxOf(1, unlockedLevels.value - 1)) }
+
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
     // Reload thumbnails whenever we return to this screen
     LaunchedEffect(Unit) {
+        val oldUnlockedLevels = unlockedLevels.value
         viewModel.loadAllLevelThumbnails(context, unlockedLevels.value)
         unlockedLevels.value = GamePreferences.getUnlockedLevels(context)
         selectedLevel.value = unlockedLevels.value
         totalPoints.value = GamePreferences.getTotalPoints(context)
+
+        // Show pin animation if level increased
+        if (unlockedLevels.value > oldUnlockedLevels && unlockedLevels.value > 1) {
+            previousLevel.value = unlockedLevels.value - 1
+            showMovingPin = true
+
+            // Animate the pin
+            animate(
+                initialValue = 0f,
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 1500, easing = FastOutSlowInEasing)
+            ) { value, _ ->
+                animationProgress = value
+            }
+
+            delay(1600)
+            showMovingPin = false
+            animationProgress = 0f
+        }
 
         // Scroll to current level
         val currentLevelIndex = unlockedLevels.value - 1
@@ -140,20 +167,37 @@ fun LevelMapScreen(
                     val isCompleted = level < unlockedLevels.value
                     val isSelected = level == selectedLevel.value
 
-                    WindingPathNode(
-                        level = level,
-                        isUnlocked = isUnlocked,
-                        isCurrent = isCurrent,
-                        isCompleted = isCompleted,
-                        isSelected = isSelected,
-                        thumbnail = mapState.levelThumbnails[level],
-                        isNextNode = index < LevelPaths.TOTAL_LEVELS - 1,
-                        onClick = {
-                            if (isUnlocked) {
-                                selectedLevel.value = level
+                    // Check if this is part of the animation
+                    val isPreviousLevel = level == previousLevel.value
+                    val isTargetLevel = level == unlockedLevels.value
+                    val showAnimatedPin = showMovingPin && (isPreviousLevel || isTargetLevel)
+
+                    Box {
+                        WindingPathNode(
+                            level = level,
+                            isUnlocked = isUnlocked,
+                            isCurrent = isCurrent,
+                            isCompleted = isCompleted,
+                            isSelected = isSelected,
+                            thumbnail = mapState.levelThumbnails[level],
+                            isNextNode = index < LevelPaths.TOTAL_LEVELS - 1,
+                            onClick = {
+                                if (isUnlocked) {
+                                    selectedLevel.value = level
+                                }
                             }
+                        )
+
+                        // Animated moving pin
+                        if (showAnimatedPin && showMovingPin) {
+                            MovingPinAnimation(
+                                fromLevel = previousLevel.value,
+                                toLevel = unlockedLevels.value,
+                                currentLevel = level,
+                                progress = animationProgress
+                            )
                         }
-                    )
+                    }
                 }
             }
 
@@ -206,6 +250,65 @@ fun LevelMapScreen(
 
         if (showSettings.value) {
             LevelMapSettingsDialog(onDismiss = { showSettings.value = false })
+        }
+    }
+}
+
+@Composable
+fun MovingPinAnimation(
+    fromLevel: Int,
+    toLevel: Int,
+    currentLevel: Int,
+    progress: Float
+) {
+    val horizontalOffset = when {
+        currentLevel % 4 == 1 -> (-60).dp
+        currentLevel % 4 == 2 -> 0.dp
+        currentLevel % 4 == 3 -> 60.dp
+        else -> 0.dp
+    }
+
+    if (currentLevel == fromLevel) {
+        // Starting position - fade out pin
+        val alpha = 1f - progress
+        if (alpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .offset(x = horizontalOffset, y = (-10).dp)
+                    .graphicsLayer { this.alpha = alpha },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "📍",
+                    fontSize = 48.sp
+                )
+            }
+        }
+    } else if (currentLevel == toLevel) {
+        // Destination level - pin arrives here
+        val scale by animateFloatAsState(
+            targetValue = if (progress > 0.8f) 1f else 0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMedium
+            ),
+            label = "pinScale"
+        )
+
+        if (progress > 0.5f) {
+            Box(
+                modifier = Modifier
+                    .size(50.dp)
+                    .offset(x = horizontalOffset, y = (-15).dp)
+                    .scale(scale),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "📍",
+                    fontSize = 40.sp
+                )
+            }
         }
     }
 }
