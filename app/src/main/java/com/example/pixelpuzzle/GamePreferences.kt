@@ -2,6 +2,10 @@ package com.example.pixelpuzzle
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import java.io.File
+import java.io.FileOutputStream
 
 object GamePreferences {
     private const val PREFS_NAME = "pixel_puzzle_prefs"
@@ -11,6 +15,7 @@ object GamePreferences {
     private const val KEY_MUSIC_ENABLED = "music_enabled"
     private const val KEY_SOUND_ENABLED = "sound_enabled"
     private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
+    private const val THUMBNAILS_DIR = "level_thumbnails"
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -30,7 +35,7 @@ object GamePreferences {
 
     fun unlockNextLevel(context: Context) {
         val current = getUnlockedLevels(context)
-        if (current < 20) {
+        if (current < LevelPaths.TOTAL_LEVELS) {
             getPrefs(context).edit().putInt(KEY_UNLOCKED_LEVELS, current + 1).apply()
         }
     }
@@ -66,5 +71,56 @@ object GamePreferences {
 
     fun setVibrationEnabled(context: Context, enabled: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_VIBRATION_ENABLED, enabled).apply()
+    }
+
+    // Thumbnail storage methods
+    fun saveLevelThumbnail(context: Context, level: Int, bitmap: Bitmap) {
+        try {
+            val thumbnailsDir = File(context.filesDir, THUMBNAILS_DIR)
+            if (!thumbnailsDir.exists()) {
+                thumbnailsDir.mkdirs()
+            }
+
+            val thumbnailFile = File(thumbnailsDir, "level_$level.jpg")
+            FileOutputStream(thumbnailFile).use { out ->
+                // Scale down bitmap for thumbnail (200x200)
+                val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 200, 200, true)
+                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                scaledBitmap.recycle()
+            }
+            DebugConfig.d("GamePreferences", "Saved thumbnail for level $level")
+        } catch (e: Exception) {
+            DebugConfig.e("GamePreferences", "Error saving thumbnail for level $level", e)
+        }
+    }
+
+    fun getLevelThumbnail(context: Context, level: Int): Bitmap? {
+        return try {
+            val thumbnailsDir = File(context.filesDir, THUMBNAILS_DIR)
+            val thumbnailFile = File(thumbnailsDir, "level_$level.jpg")
+
+            if (thumbnailFile.exists()) {
+                BitmapFactory.decodeFile(thumbnailFile.absolutePath)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            DebugConfig.e("GamePreferences", "Error loading thumbnail for level $level", e)
+            null
+        }
+    }
+
+    fun getAllLevelThumbnails(context: Context): Map<Int, Bitmap> {
+        val thumbnails = mutableMapOf<Int, Bitmap>()
+        val unlockedLevels = getUnlockedLevels(context)
+
+        // Load thumbnails for completed levels (all levels before current)
+        for (level in 1 until unlockedLevels) {
+            getLevelThumbnail(context, level)?.let { bitmap ->
+                thumbnails[level] = bitmap
+            }
+        }
+
+        return thumbnails
     }
 }

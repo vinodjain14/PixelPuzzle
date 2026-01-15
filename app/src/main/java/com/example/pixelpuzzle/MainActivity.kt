@@ -95,21 +95,9 @@ fun PixelPuzzleApp() {
             val level = backStackEntry.arguments?.getInt("level") ?: 1
             GameScreen(
                 level = level,
-                onHome = {
+                onBackToMap = {
                     navController.navigate(Screen.LevelMap.route) {
                         popUpTo(Screen.LevelMap.route) { inclusive = true }
-                    }
-                },
-                onNextLevel = {
-                    val nextLevel = level + 1
-                    if (nextLevel <= LevelPaths.TOTAL_LEVELS) {
-                        navController.navigate(Screen.Game.createRoute(nextLevel)) {
-                            popUpTo(Screen.Game.route) { inclusive = true }
-                        }
-                    } else {
-                        navController.navigate(Screen.LevelMap.route) {
-                            popUpTo(Screen.LevelMap.route) { inclusive = true }
-                        }
                     }
                 }
             )
@@ -120,8 +108,7 @@ fun PixelPuzzleApp() {
 @Composable
 fun GameScreen(
     level: Int,
-    onHome: () -> Unit,
-    onNextLevel: () -> Unit,
+    onBackToMap: () -> Unit,
     vm: PuzzleViewModel = viewModel()
 ) {
     val state by vm.state.collectAsState()
@@ -155,6 +142,11 @@ fun GameScreen(
 
     LaunchedEffect(state.isSolved) {
         if (state.isSolved) {
+            // Save the solved puzzle thumbnail
+            vm.getBitmap()?.let { bitmap ->
+                GamePreferences.saveLevelThumbnail(context, level, bitmap)
+            }
+
             GamePreferences.addPoints(context, 10)
             GamePreferences.unlockNextLevel(context)
             currentPoints.value = GamePreferences.getTotalPoints(context)
@@ -275,11 +267,11 @@ fun GameScreen(
             ) {
                 if (state.isSolved) {
                     Button(
-                        onClick = onNextLevel,
+                        onClick = onBackToMap,
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                         shape = RoundedCornerShape(16.dp)
                     ) {
-                        Text(if (level < LevelPaths.TOTAL_LEVELS) "Next Level" else "Back to Map", fontSize = 18.sp)
+                        Text("Next", fontSize = 18.sp)
                     }
                 }
             }
@@ -298,7 +290,7 @@ fun GameScreen(
                 },
                 onHome = {
                     showGameSettings.value = false
-                    onHome()
+                    onBackToMap()
                 }
             )
         }
