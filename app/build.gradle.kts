@@ -67,7 +67,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
 
-    // FIXED: Corrected Coil Dependency Path
+    // Coil for image loading
     implementation("io.coil-kt:coil-compose:2.5.0")
 
     // Lifecycle & ViewModel for Compose
@@ -76,4 +76,10 @@ dependencies {
 
     // Navigation Compose
     implementation("androidx.navigation:navigation-compose:2.7.6")
+
+    // Phase 3: Google AdMob for ads
+    implementation("com.google.android.gms:play-services-ads:23.0.0")
+
+    // Phase 3: Google Play Billing for IAP
+    implementation("com.android.billingclient:billing-ktx:6.1.0")
 }
