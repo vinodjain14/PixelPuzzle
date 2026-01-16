@@ -23,10 +23,14 @@ class PuzzleViewModel : ViewModel() {
     private val _state = MutableStateFlow(GameState())
     val state: StateFlow<GameState> = _state.asStateFlow()
 
+    // New: Track merge events for animations
+    private val _mergeEvent = MutableStateFlow<MergeEvent?>(null)
+    val mergeEvent: StateFlow<MergeEvent?> = _mergeEvent.asStateFlow()
+
     private var fullBitmap: Bitmap? = null
     private val accessKey = "oZS1ybE8EnX5SOSvsQ50noM-zOEaxsIthml15U36Mk8"
     private var nextAvailableUnitId = 0
-    private var currentImageUrl: String? = null // Store current image URL for restart
+    private var currentImageUrl: String? = null
 
     companion object {
         private const val TAG = "PuzzleViewModel"
@@ -46,7 +50,6 @@ class PuzzleViewModel : ViewModel() {
                 cols = cols
             )
 
-            // Fetch image with retry logic to avoid repeats
             var imageIdAndUrl: String? = null
             val maxRetries = 15
             var retries = 0
@@ -60,7 +63,6 @@ class PuzzleViewModel : ViewModel() {
                         val imageUrl = parts[1]
 
                         if (!GamePreferences.isImageIdUsed(context, imageId)) {
-                            // Found an unused image
                             GamePreferences.addUsedImageId(context, imageId)
                             imageIdAndUrl = imageUrl
                             DebugConfig.d(TAG, "Selected unused image: $imageId")
@@ -85,9 +87,7 @@ class PuzzleViewModel : ViewModel() {
                 return@launch
             }
 
-            // Store the image URL for restart functionality
             currentImageUrl = imageIdAndUrl
-
             loadImageAndCreatePuzzle(context, imageIdAndUrl, rows, cols, totalPieces, level)
         }
     }
@@ -109,10 +109,8 @@ class PuzzleViewModel : ViewModel() {
                 isSolved = false
             )
 
-            // Add a small delay for visual feedback
             delay(300)
 
-            // Reshuffle the existing puzzle
             val initialPieces = List(totalPieces) { i ->
                 PuzzlePiece(
                     id = i,
@@ -209,13 +207,11 @@ class PuzzleViewModel : ViewModel() {
                     val imageId = jsonObject.getString("id")
                     val imageUrl = jsonObject.getJSONObject("urls").getString("regular")
 
-                    // Check if this image has been used before
-                    // Note: context needs to be passed, we'll handle this in the calling function
                     DebugConfig.d(TAG, "Found image ID: $imageId")
-                    return@withContext "$imageId|$imageUrl" // Return both ID and URL
+                    return@withContext "$imageId|$imageUrl"
                 }
 
-                delay(500) // Small delay between attempts
+                delay(500)
             }
 
             DebugConfig.w(TAG, "Could not find unused image after $maxAttempts attempts")
@@ -260,7 +256,6 @@ class PuzzleViewModel : ViewModel() {
                 break
             }
 
-            // Check for horizontal wrapping (moving left/right)
             if (abs(deltaPos) == 1) {
                 val newRow = newPos / cols
                 val newCol = newPos % cols
@@ -278,6 +273,12 @@ class PuzzleViewModel : ViewModel() {
         }
 
         if (!validMove) {
+            // Trigger error feedback
+            _mergeEvent.value = MergeEvent(
+                type = MergeEventType.ERROR,
+                pieceIds = movingPieces.map { it.id },
+                timestamp = System.currentTimeMillis()
+            )
             DebugConfig.d(TAG, "========================================")
             return
         }
@@ -297,6 +298,12 @@ class PuzzleViewModel : ViewModel() {
         DebugConfig.d(TAG, "Vacated positions: $vacated")
 
         if (obstacles.size > vacated.size) {
+            // Trigger error feedback
+            _mergeEvent.value = MergeEvent(
+                type = MergeEventType.ERROR,
+                pieceIds = movingPieces.map { it.id },
+                timestamp = System.currentTimeMillis()
+            )
             DebugConfig.d(TAG, "MOVE INVALID: Not enough space for obstacles (${obstacles.size} obstacles, ${vacated.size} vacated spots)")
             DebugConfig.d(TAG, "========================================")
             return
@@ -331,10 +338,28 @@ class PuzzleViewModel : ViewModel() {
         val brokenPieces = breakInvalidMerges(nextPieces, currentState)
 
         DebugConfig.d(TAG, "Checking for new merges...")
-        val mergedPieces = checkMerges(brokenPieces, currentState)
+        val (mergedPieces, mergedPieceIds) = checkMergesWithTracking(brokenPieces, currentState)
+
+        // Trigger merge feedback if pieces merged
+        if (mergedPieceIds.isNotEmpty()) {
+            _mergeEvent.value = MergeEvent(
+                type = MergeEventType.MERGE,
+                pieceIds = mergedPieceIds,
+                timestamp = System.currentTimeMillis()
+            )
+        }
 
         val isSolved = mergedPieces.all {
             it.currentPos == (it.originalRow * cols + it.originalCol)
+        }
+
+        // Trigger completion feedback if solved
+        if (isSolved) {
+            _mergeEvent.value = MergeEvent(
+                type = MergeEventType.COMPLETE,
+                pieceIds = mergedPieces.map { it.id },
+                timestamp = System.currentTimeMillis()
+            )
         }
 
         DebugConfig.d(TAG, "Final state: ${mergedPieces.map { "Piece ${it.id} (Unit ${it.unitId}) at pos ${it.currentPos}" }}")
@@ -404,8 +429,9 @@ class PuzzleViewModel : ViewModel() {
         return result
     }
 
-    private fun checkMerges(pieces: List<PuzzlePiece>, gameState: GameState): List<PuzzlePiece> {
+    private fun checkMergesWithTracking(pieces: List<PuzzlePiece>, gameState: GameState): Pair<List<PuzzlePiece>, List<Int>> {
         val result = pieces.toMutableList()
+        val mergedPieceIds = mutableListOf<Int>()
         var changed = true
         var mergeCount = 0
         val cols = gameState.cols
@@ -433,6 +459,8 @@ class PuzzleViewModel : ViewModel() {
                                 val newId = p1.unitId
 
                                 mergeCount++
+                                mergedPieceIds.add(p1.id)
+                                mergedPieceIds.add(p2.id)
                                 DebugConfig.d(TAG, "MERGE #$mergeCount: Unit $oldId merged into Unit $newId (Pieces ${p1.id} & ${p2.id})")
 
                                 result.indices.forEach { k ->
@@ -450,8 +478,27 @@ class PuzzleViewModel : ViewModel() {
             DebugConfig.d(TAG, "No merges occurred")
         }
 
-        return result
+        return Pair(result, mergedPieceIds.distinct())
+    }
+
+    fun clearMergeEvent() {
+        _mergeEvent.value = null
     }
 
     fun getBitmap() = fullBitmap
+}
+
+/**
+ * Represents different types of game events that trigger feedback
+ */
+data class MergeEvent(
+    val type: MergeEventType,
+    val pieceIds: List<Int>,
+    val timestamp: Long
+)
+
+enum class MergeEventType {
+    MERGE,      // Pieces successfully merged
+    COMPLETE,   // Puzzle completed
+    ERROR       // Invalid move
 }

@@ -53,8 +53,34 @@ import kotlin.math.roundToInt
 import kotlin.random.Random
 
 class MainActivity : ComponentActivity() {
+    private lateinit var soundManager: SoundManager
+    private lateinit var vibrationManager: VibrationManager
+    private lateinit var adManager: AdManager
+    private lateinit var billingManager: BillingManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize managers
+        soundManager = SoundManager.getInstance(this)
+        vibrationManager = VibrationManager.getInstance(this)
+        adManager = AdManager.getInstance(this)
+        billingManager = BillingManager.getInstance(this)
+
+        // Initialize AdMob
+        adManager.initialize()
+
+        // Enable test ads for development
+        if (DebugConfig.ENABLE_DEBUG_LOGS) {
+            AdTestHelper.enableTestMode(this)
+        }
+
+        // Initialize billing
+        billingManager.initialize {
+            // Preload first ad
+            adManager.preloadAd()
+        }
+
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFFBB86FC))) {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.White) {
@@ -62,6 +88,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        soundManager.release()
+        billingManager.release()
     }
 }
 
@@ -83,9 +115,14 @@ fun PixelPuzzleApp() {
         }
 
         composable(Screen.LevelMap.route) {
-            LevelMapScreen(onLevelClick = { level ->
-                navController.navigate(Screen.Game.createRoute(level))
-            })
+            val context = LocalContext.current
+            val unlockedLevels = GamePreferences.getUnlockedLevels(context)
+
+            LevelMapScreen(
+                onLevelClick = { level ->
+                    navController.navigate(Screen.Game.createRoute(level))
+                },
+            )
         }
 
         composable(
@@ -93,7 +130,8 @@ fun PixelPuzzleApp() {
             arguments = listOf(navArgument("level") { type = NavType.IntType })
         ) { backStackEntry ->
             val level = backStackEntry.arguments?.getInt("level") ?: 1
-            GameScreen(
+            // Use your existing GameScreen function (not GameScreenPhaseB)
+            GameScreenPhaseB(
                 level = level,
                 onBackToMap = {
                     navController.navigate(Screen.LevelMap.route) {
@@ -112,27 +150,54 @@ fun GameScreen(
     vm: PuzzleViewModel = viewModel()
 ) {
     val state by vm.state.collectAsState()
+    val mergeEvent by vm.mergeEvent.collectAsState()
     val context = LocalContext.current
+    val activity = context as? ComponentActivity
     val showGameSettings = remember { mutableStateOf(false) }
     val currentPoints = remember { mutableStateOf(GamePreferences.getTotalPoints(context)) }
     val difficulty = getDifficultyForLevel(level)
 
-    fun triggerVibration() {
-        if (GamePreferences.isVibrationEnabled(context)) {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                vibratorManager.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
+    // Phase 3: Hint system states
+    val showHintDialog = remember { mutableStateOf(false) }
+    val showShopDialog = remember { mutableStateOf(false) }
+    var isLoadingAd by remember { mutableStateOf(false) }
+    var showAdError by remember { mutableStateOf(false) }
+    var adErrorMessage by remember { mutableStateOf("") }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(15, VibrationEffect.DEFAULT_AMPLITUDE))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(15)
+    // Managers
+    val soundManager = remember { SoundManager.getInstance(context) }
+    val vibrationManager = remember { VibrationManager.getInstance(context) }
+    val adManager = remember { AdManager.getInstance(context) }
+    val billingManager = remember { BillingManager.getInstance(context) }
+
+    // Animation triggers
+    var showShimmer by remember { mutableStateOf(false) }
+    var showRipple by remember { mutableStateOf(false) }
+    var rippleCenter by remember { mutableStateOf(Offset.Zero) }
+
+    // Handle merge events
+    LaunchedEffect(mergeEvent) {
+        mergeEvent?.let { event ->
+            when (event.type) {
+                MergeEventType.MERGE -> {
+                    vibrationManager.vibrate(VibrationPattern.MERGE)
+                    soundManager.playSound(SoundEffect.MERGE)
+                    showShimmer = true
+                    showRipple = true
+                    delay(800)
+                    showShimmer = false
+                    showRipple = false
+                }
+                MergeEventType.COMPLETE -> {
+                    vibrationManager.vibrate(VibrationPattern.COMPLETE)
+                    soundManager.playSound(SoundEffect.COMPLETE)
+                }
+                MergeEventType.ERROR -> {
+                    vibrationManager.vibrate(VibrationPattern.ERROR)
+                    soundManager.playSound(SoundEffect.ERROR)
+                }
             }
+            vm.clearMergeEvent()
         }
     }
 
@@ -142,7 +207,6 @@ fun GameScreen(
 
     LaunchedEffect(state.isSolved) {
         if (state.isSolved) {
-            // Save the solved puzzle thumbnail
             vm.getBitmap()?.let { bitmap ->
                 GamePreferences.saveLevelThumbnail(context, level, bitmap)
             }
@@ -150,6 +214,97 @@ fun GameScreen(
             GamePreferences.addPoints(context, 10)
             GamePreferences.unlockNextLevel(context)
             currentPoints.value = GamePreferences.getTotalPoints(context)
+            soundManager.playSound(SoundEffect.COIN)
+        }
+    }
+
+    // Handle hint selection
+    fun handleHintSelected(hintType: HintType) {
+        when (hintType) {
+            is HintType.FreeHint -> {
+                // Check if ad is ready
+                if (!adManager.isAdReady()) {
+                    isLoadingAd = true
+                    adManager.loadRewardedAd(
+                        onAdLoaded = {
+                            isLoadingAd = false
+                            // Show ad
+                            activity?.let { act ->
+                                adManager.showRewardedAd(
+                                    activity = act,
+                                    onUserEarnedReward = {
+                                        if (HintSystemManager.useFreeHint(context)) {
+                                            // Apply hint logic here
+                                            vibrationManager.vibrate(VibrationPattern.SUCCESS)
+                                            soundManager.playSound(SoundEffect.POP)
+                                        }
+                                    },
+                                    onAdFailedToShow = { error ->
+                                        adErrorMessage = error
+                                        showAdError = true
+                                    }
+                                )
+                            }
+                        },
+                        onAdFailedToLoad = { error ->
+                            isLoadingAd = false
+                            adErrorMessage = error
+                            showAdError = true
+                        }
+                    )
+                } else {
+                    // Ad is ready, show it
+                    activity?.let { act ->
+                        adManager.showRewardedAd(
+                            activity = act,
+                            onUserEarnedReward = {
+                                if (HintSystemManager.useFreeHint(context)) {
+                                    vibrationManager.vibrate(VibrationPattern.SUCCESS)
+                                    soundManager.playSound(SoundEffect.POP)
+                                }
+                            },
+                            onAdFailedToShow = { error ->
+                                adErrorMessage = error
+                                showAdError = true
+                            }
+                        )
+                    }
+                }
+            }
+            is HintType.PremiumHint -> {
+                val availability = HintSystemManager.getHintAvailability(context)
+                if (availability.premiumHintsOwned > 0) {
+                    // Use owned hint
+                    if (HintSystemManager.usePremiumHint(context)) {
+                        vibrationManager.vibrate(VibrationPattern.SUCCESS)
+                        soundManager.playSound(SoundEffect.POP)
+                    }
+                } else {
+                    // Purchase with coins
+                    if (HintSystemManager.purchasePremiumHint(context)) {
+                        currentPoints.value = GamePreferences.getTotalPoints(context)
+                        vibrationManager.vibrate(VibrationPattern.SUCCESS)
+                        soundManager.playSound(SoundEffect.COIN)
+                    }
+                }
+            }
+            is HintType.MasterReveal -> {
+                val availability = HintSystemManager.getHintAvailability(context)
+                if (availability.masterRevealsOwned > 0) {
+                    // Use owned reveal
+                    if (HintSystemManager.useMasterReveal(context)) {
+                        vibrationManager.vibrate(VibrationPattern.SUCCESS)
+                        soundManager.playSound(SoundEffect.POP)
+                    }
+                } else {
+                    // Purchase with coins
+                    if (HintSystemManager.purchaseMasterReveal(context)) {
+                        currentPoints.value = GamePreferences.getTotalPoints(context)
+                        vibrationManager.vibrate(VibrationPattern.SUCCESS)
+                        soundManager.playSound(SoundEffect.COIN)
+                    }
+                }
+            }
         }
     }
 
@@ -163,25 +318,25 @@ fun GameScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Left side - Gold coin with points
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Start
+                PulseEffect(
+                    isActive = currentPoints.value > 0,
+                    modifier = Modifier
                 ) {
-                    Text(
-                        text = "🪙",
-                        fontSize = 32.sp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "${currentPoints.value}",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD700)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Start
+                    ) {
+                        Text(text = "🪙", fontSize = 32.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "${currentPoints.value}",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFFD700)
+                        )
+                    }
                 }
 
-                // Center - Level number only
                 Text(
                     text = "LEVEL $level",
                     fontSize = 24.sp,
@@ -189,20 +344,25 @@ fun GameScreen(
                     color = Color.Black
                 )
 
-                // Right side - Settings
-                IconButton(onClick = { showGameSettings.value = true }) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = Color(0xFF6650a4),
-                        modifier = Modifier.size(28.dp)
-                    )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Hint button
+                    HintButton(onClick = { showHintDialog.value = true })
+
+                    IconButton(onClick = { showGameSettings.value = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = Color(0xFF6650a4),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Fixed size board container - fills available space
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -223,7 +383,6 @@ fun GameScreen(
                                 label = "solvedScale"
                             )
 
-                            // Fixed size for solved image with dark border
                             Box(
                                 modifier = Modifier
                                     .width(370.dp)
@@ -233,15 +392,15 @@ fun GameScreen(
                                         this.scaleY = scale
                                     }
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(Color.White) // White border (same as pieces)
-                                    .padding(1.dp) // Border thickness (same as pieces)
+                                    .background(Color.White)
+                                    .padding(1.dp)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(Color(0xFF2E7D32))
                             ) {
                                 SolvedPuzzleWithGrid(bitmap = bitmap, rows = state.rows, cols = state.cols)
+                                StarBurstEffect(trigger = state.isSolved)
                             }
                         } else {
-                            // Fixed size for puzzle board
                             Box(
                                 modifier = Modifier
                                     .width(370.dp)
@@ -252,22 +411,43 @@ fun GameScreen(
                                     state = state,
                                     bitmap = bitmap,
                                     onUnitMove = vm::onUnitMoveCompleted,
-                                    onDragStart = { triggerVibration() }
+                                    onDragStart = {
+                                        vibrationManager.vibrate(VibrationPattern.LIGHT_TAP)
+                                    },
+                                    onRippleTrigger = { center ->
+                                        rippleCenter = center
+                                    }
                                 )
+
+                                ShimmerEffect(
+                                    trigger = showShimmer,
+                                    modifier = Modifier.matchParentSize()
+                                )
+
+                                if (showRipple) {
+                                    RippleEffect(
+                                        trigger = showRipple,
+                                        center = rippleCenter,
+                                        modifier = Modifier.matchParentSize()
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Fixed space for button (reduced padding)
             Box(
                 modifier = Modifier.height(64.dp),
                 contentAlignment = Alignment.Center
             ) {
                 if (state.isSolved) {
                     Button(
-                        onClick = onBackToMap,
+                        onClick = {
+                            vibrationManager.vibrate(VibrationPattern.MEDIUM_TAP)
+                            soundManager.playSound(SoundEffect.UNLOCK)
+                            onBackToMap()
+                        },
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                         shape = RoundedCornerShape(16.dp)
                     ) {
@@ -275,10 +455,6 @@ fun GameScreen(
                     }
                 }
             }
-        }
-
-        if (state.isSolved) {
-            ConfettiCelebration()
         }
 
         if (showGameSettings.value) {
@@ -291,6 +467,55 @@ fun GameScreen(
                 onHome = {
                     showGameSettings.value = false
                     onBackToMap()
+                }
+            )
+        }
+
+        if (showHintDialog.value) {
+            HintDialog(
+                onHintSelected = { hintType ->
+                    handleHintSelected(hintType)
+                },
+                onDismiss = { showHintDialog.value = false }
+            )
+        }
+
+        if (showShopDialog.value) {
+            HintShopDialog(
+                onDismiss = { showShopDialog.value = false },
+                onPurchase = { productId ->
+                    activity?.let { act ->
+                        // Load product details and launch purchase
+                        billingManager.queryProducts { products ->
+                            products.find { it.productId == productId }?.let { product ->
+                                billingManager.launchPurchaseFlow(act, product)
+                            }
+                        }
+                    }
+                }
+            )
+        }
+
+        if (isLoadingAd) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = Color.White)
+            }
+        }
+
+        if (showAdError) {
+            AlertDialog(
+                onDismissRequest = { showAdError = false },
+                title = { Text("Ad Error") },
+                text = { Text(adErrorMessage) },
+                confirmButton = {
+                    Button(onClick = { showAdError = false }) {
+                        Text("OK")
+                    }
                 }
             )
         }
@@ -373,16 +598,9 @@ fun GameSettingsDialog(onDismiss: () -> Unit, onRestart: () -> Unit, onHome: () 
                             GamePreferences.setMusicEnabled(context, musicEnabled)
                         }
                     ) {
-                        Text(
-                            text = if (musicEnabled) "🎵" else "🔇",
-                            fontSize = 40.sp
-                        )
+                        Text(text = if (musicEnabled) "🎵" else "🔇", fontSize = 40.sp)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Music",
-                            fontSize = 14.sp,
-                            color = Color.Gray
-                        )
+                        Text(text = "Music", fontSize = 14.sp, color = Color.Gray)
                     }
 
                     Column(
@@ -392,16 +610,9 @@ fun GameSettingsDialog(onDismiss: () -> Unit, onRestart: () -> Unit, onHome: () 
                             GamePreferences.setSoundEnabled(context, soundEnabled)
                         }
                     ) {
-                        Text(
-                            text = if (soundEnabled) "🔊" else "🔈",
-                            fontSize = 40.sp
-                        )
+                        Text(text = if (soundEnabled) "🔊" else "🔈", fontSize = 40.sp)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Sound",
-                            fontSize = 14.sp,
-                            color = Color.Gray
-                        )
+                        Text(text = "Sound", fontSize = 14.sp, color = Color.Gray)
                     }
 
                     Column(
@@ -411,16 +622,9 @@ fun GameSettingsDialog(onDismiss: () -> Unit, onRestart: () -> Unit, onHome: () 
                             GamePreferences.setVibrationEnabled(context, vibrationEnabled)
                         }
                     ) {
-                        Text(
-                            text = if (vibrationEnabled) "📳" else "📴",
-                            fontSize = 40.sp
-                        )
+                        Text(text = if (vibrationEnabled) "📳" else "📴", fontSize = 40.sp)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Vibration",
-                            fontSize = 14.sp,
-                            color = Color.Gray
-                        )
+                        Text(text = "Vibration", fontSize = 14.sp, color = Color.Gray)
                     }
                 }
             }
@@ -428,65 +632,15 @@ fun GameSettingsDialog(onDismiss: () -> Unit, onRestart: () -> Unit, onHome: () 
     }
 }
 
-@Composable
-fun ConfettiCelebration() {
-    var showConfetti by remember { mutableStateOf(true) }
 
-    LaunchedEffect(Unit) {
-        delay(10000)
-        showConfetti = false
-    }
-
-    if (showConfetti) {
-        val particles = remember {
-            List(30) {
-                ConfettiParticle(
-                    x = Random.nextFloat(),
-                    y = Random.nextFloat() * -0.5f,
-                    color = listOf(
-                        Color(0xFFFF6B6B), Color(0xFF4ECDC4), Color(0xFFFFE66D),
-                        Color(0xFF95E1D3), Color(0xFFF38181), Color(0xFFAA96DA),
-                        Color(0xFFFF9FF3), Color(0xFF54A0FF)
-                    ).random(),
-                    size = (8..20).random().dp
-                )
-            }
-        }
-
-        particles.forEach { particle ->
-            var offsetY by remember { mutableStateOf(0f) }
-
-            LaunchedEffect(Unit) {
-                while (true) {
-                    offsetY = 0f
-                    animate(
-                        initialValue = 0f,
-                        targetValue = 1.2f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(durationMillis = (2000..3500).random()),
-                            repeatMode = RepeatMode.Restart
-                        )
-                    ) { value, _ -> offsetY = value }
-                }
-            }
-
-            Box(
-                modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.TopStart)
-                    .offset { IntOffset((particle.x * 1000).toInt(), (offsetY * 1800).toInt()) }
-                    .size(particle.size).clip(CircleShape).background(particle.color)
-            )
-        }
-    }
-}
-
-data class ConfettiParticle(val x: Float, val y: Float, val color: Color, val size: androidx.compose.ui.unit.Dp)
 
 @Composable
 fun DraggablePuzzleGrid(
     state: GameState,
     bitmap: Bitmap,
     onUnitMove: (Int, Int) -> Unit,
-    onDragStart: () -> Unit = {}
+    onDragStart: () -> Unit = {},
+    onRippleTrigger: (Offset) -> Unit = {}
 ) {
     var gridSize by remember { mutableStateOf(IntSize.Zero) }
     var draggingUnitId by remember { mutableStateOf<Int?>(null) }
@@ -526,7 +680,7 @@ fun DraggablePuzzleGrid(
             val cellWidth = gridSize.width / cols
             val cellHeight = gridSize.height / rows
 
-            // Draw background grid cells (dark green blocks touching each other)
+            // Draw background grid cells
             for (row in 0 until rows) {
                 for (col in 0 until cols) {
                     Box(
@@ -581,7 +735,6 @@ fun DraggablePuzzleGrid(
                     label = "flip"
                 )
 
-                // Check for merged neighbors
                 val hasRight = state.pieces.any {
                     it.unitId == piece.unitId &&
                             it.originalCol == piece.originalCol + 1 &&
@@ -643,7 +796,7 @@ fun DraggablePuzzleGrid(
                         )
                         .shadow(if (isPartOfDraggingUnit) 12.dp else 0.dp, shape)
                         .clip(shape)
-                        .background(Color.White) // White border
+                        .background(Color.White)
                         .padding(
                             end = if (!hasRight) borderWidth else 0.dp,
                             bottom = if (!hasBottom) borderWidth else 0.dp,
@@ -664,6 +817,12 @@ fun DraggablePuzzleGrid(
                                         val deltaX = (dragOffset.x.toFloat() / cellWidth).roundToInt()
                                         val deltaY = (dragOffset.y.toFloat() / cellHeight).roundToInt()
                                         val totalDelta = (deltaY * cols) + deltaX
+
+                                        // Trigger ripple effect at piece center
+                                        val centerX = displayOffset.x + cellWidth / 2f
+                                        val centerY = displayOffset.y + cellHeight / 2f
+                                        onRippleTrigger(Offset(centerX, centerY))
+
                                         onUnitMove(unitId, totalDelta)
                                         draggingUnitId = null
                                         dragOffset = IntOffset.Zero
@@ -728,7 +887,6 @@ fun PuzzlePieceImage(piece: PuzzlePiece, fullBitmap: Bitmap, gameState: GameStat
 
 @Composable
 fun SolvedPuzzleWithGrid(bitmap: Bitmap, rows: Int, cols: Int) {
-    // Display the complete solved image without any grid lines
     Image(
         bitmap = bitmap.asImageBitmap(),
         contentDescription = "Solved Puzzle",

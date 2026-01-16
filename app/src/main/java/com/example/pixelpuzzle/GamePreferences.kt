@@ -18,7 +18,8 @@ object GamePreferences {
     private const val KEY_USED_IMAGE_IDS = "used_image_ids"
     private const val THUMBNAILS_DIR = "level_thumbnails"
 
-    private fun getPrefs(context: Context): SharedPreferences {
+    // Made public for DailyStreakManager and FlashChallengeManager
+    fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
@@ -84,7 +85,6 @@ object GamePreferences {
 
             val thumbnailFile = File(thumbnailsDir, "level_$level.jpg")
             FileOutputStream(thumbnailFile).use { out ->
-                // Scale down bitmap for thumbnail (200x200)
                 val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 200, 200, true)
                 scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
                 scaledBitmap.recycle()
@@ -115,7 +115,6 @@ object GamePreferences {
         val thumbnails = mutableMapOf<Int, Bitmap>()
         val unlockedLevels = getUnlockedLevels(context)
 
-        // Load thumbnails for completed levels (all levels before current)
         for (level in 1 until unlockedLevels) {
             getLevelThumbnail(context, level)?.let { bitmap ->
                 thumbnails[level] = bitmap

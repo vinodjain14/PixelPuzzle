@@ -1,11 +1,7 @@
 package com.example.pixelpuzzle
 
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -33,8 +29,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.pixelpuzzle.ui.theme.NeonColors
+import com.example.pixelpuzzle.ui.theme.GameColors
+import com.example.pixelpuzzle.ui.theme.TextColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -50,6 +48,12 @@ fun LevelMapScreen(
     val showSettings = remember { mutableStateOf(false) }
     val totalPoints = remember { mutableStateOf(GamePreferences.getTotalPoints(context)) }
 
+    // Phase 2: Streak & Flash Challenge states
+    val streakInfo = remember { mutableStateOf(DailyStreakManager.getStreakInfo(context)) }
+    val showStreakDialog = remember { mutableStateOf(false) }
+    val showStreakCelebration = remember { mutableStateOf(false) }
+    val flashChallenge = remember { mutableStateOf(FlashChallengeManager.getActiveChallenge(context)) }
+
     // Animation state for moving pin
     var showMovingPin by remember { mutableStateOf(false) }
     var animationProgress by remember { mutableStateOf(0f) }
@@ -58,7 +62,6 @@ fun LevelMapScreen(
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
-    // Reload thumbnails whenever we return to this screen
     LaunchedEffect(Unit) {
         val oldUnlockedLevels = unlockedLevels.value
         viewModel.loadAllLevelThumbnails(context, unlockedLevels.value)
@@ -66,12 +69,19 @@ fun LevelMapScreen(
         selectedLevel.value = unlockedLevels.value
         totalPoints.value = GamePreferences.getTotalPoints(context)
 
-        // Show pin animation if level increased
+        val newStreakInfo = DailyStreakManager.updateDailyStreak(context)
+        streakInfo.value = newStreakInfo
+
+        if (newStreakInfo.isNewStreak && newStreakInfo.currentStreak > 1) {
+            showStreakCelebration.value = true
+        }
+
+        flashChallenge.value = FlashChallengeManager.getActiveChallenge(context)
+
         if (unlockedLevels.value > oldUnlockedLevels && unlockedLevels.value > 1) {
             previousLevel.value = unlockedLevels.value - 1
             showMovingPin = true
 
-            // Animate the pin
             animate(
                 initialValue = 0f,
                 targetValue = 1f,
@@ -85,75 +95,123 @@ fun LevelMapScreen(
             animationProgress = 0f
         }
 
-        // Scroll to current level
         val currentLevelIndex = unlockedLevels.value - 1
         if (currentLevelIndex > 0) {
             listState.scrollToItem(maxOf(0, currentLevelIndex - 2))
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFFF5F5F5),
-                        Color(0xFFE8E8E8)
-                    )
-                )
-            )
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Dynamic gradient background
+        DynamicGradientBackground(
+            type = BackgroundType.LEVEL_MAP,
+            speed = 0.5f
+        )
+
+        // Particle overlay for depth
+        ParticleBackground(
+            particleCount = 15,
+            colors = listOf(NeonColors.ElectricTeal, NeonColors.NeonPurple)
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // Glass header panel
+            FrostedPanel(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
             ) {
-                Column {
-                    Text(
-                        text = "Path of Discovery",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF6650a4)
-                    )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 4.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "🪙",
-                            fontSize = 20.sp
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "${totalPoints.value}",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFFFD700)
-                        )
-                    }
-                }
+                        Column {
+                            Text(
+                                text = "Path of Discovery",
+                                fontSize = 26.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = NeonColors.ElectricTeal,
+                                style = MaterialTheme.typography.headlineMedium
+                            )
 
-                IconButton(onClick = { showSettings.value = true }) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = Color(0xFF6650a4),
-                        modifier = Modifier.size(28.dp)
-                    )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.padding(top = 8.dp)
+                            ) {
+                                // Coins with glass badge
+                                GlassBadge(
+                                    text = "🪙 ${totalPoints.value}",
+                                    backgroundColor = GameColors.CoinGold
+                                )
+
+                                // Streak with glass badge
+                                GlassBadge(
+                                    text = "🔥 ${streakInfo.value.currentStreak}",
+                                    backgroundColor = NeonColors.NeonOrange,
+                                    modifier = Modifier.clickable { showStreakDialog.value = true }
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = { showSettings.value = true },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(
+                                            NeonColors.ElectricTeal.copy(alpha = 0.3f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = NeonColors.ElectricTeal,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Winding Path with Levels
+            // Flash Challenge with glass effect
+            flashChallenge.value?.let { challenge ->
+                GlassCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onLevelClick(challenge.level) },
+                    backgroundColor = NeonColors.NeonOrange.copy(alpha = 0.2f),
+                    borderColor = NeonColors.NeonOrange,
+                    cornerRadius = 20.dp
+                ) {
+                    FlashChallengeBanner(
+                        challenge = challenge,
+                        onChallengeClick = { onLevelClick(it.level) },
+                        modifier = Modifier.background(Color.Transparent)
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Winding Path with glass effect
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 state = listState,
@@ -167,13 +225,12 @@ fun LevelMapScreen(
                     val isCompleted = level < unlockedLevels.value
                     val isSelected = level == selectedLevel.value
 
-                    // Check if this is part of the animation
                     val isPreviousLevel = level == previousLevel.value
                     val isTargetLevel = level == unlockedLevels.value
                     val showAnimatedPin = showMovingPin && (isPreviousLevel || isTargetLevel)
 
                     Box {
-                        WindingPathNode(
+                        WindingPathNodeGlass(
                             level = level,
                             isUnlocked = isUnlocked,
                             isCurrent = isCurrent,
@@ -188,7 +245,6 @@ fun LevelMapScreen(
                             }
                         )
 
-                        // Animated moving pin
                         if (showAnimatedPin && showMovingPin) {
                             MovingPinAnimation(
                                 fromLevel = previousLevel.value,
@@ -203,53 +259,218 @@ fun LevelMapScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Play Button - Skeuomorphic tile style
-            Surface(
+            // Glass Play Button
+            GlassButton(
+                onClick = { onLevelClick(selectedLevel.value) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp)
-                    .clickable(enabled = selectedLevel.value <= unlockedLevels.value) {
-                        onLevelClick(selectedLevel.value)
-                    },
-                shape = RoundedCornerShape(12.dp),
-                shadowElevation = 8.dp,
-                color = if (selectedLevel.value <= unlockedLevels.value) Color(0xFF6650a4) else Color.Gray
+                    .height(64.dp),
+                enabled = selectedLevel.value <= unlockedLevels.value,
+                backgroundColor = if (selectedLevel.value <= unlockedLevels.value) {
+                    NeonColors.ElectricTeal
+                } else {
+                    Color.Gray
+                }
             ) {
+                Text(
+                    text = "Play Level ${selectedLevel.value}",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+        }
+
+        // Dialogs with glass effect
+        if (showSettings.value) {
+            GlassSettingsDialog(onDismiss = { showSettings.value = false })
+        }
+
+        if (showStreakDialog.value) {
+            StreakDialog(onDismiss = { showStreakDialog.value = false })
+        }
+
+        if (showStreakCelebration.value) {
+            StreakCelebration(
+                show = showStreakCelebration.value,
+                streakCount = streakInfo.value.currentStreak,
+                onDismiss = { showStreakCelebration.value = false }
+            )
+        }
+    }
+}
+
+@Composable
+fun WindingPathNodeGlass(
+    level: Int,
+    isUnlocked: Boolean,
+    isCurrent: Boolean,
+    isCompleted: Boolean,
+    isSelected: Boolean,
+    thumbnail: android.graphics.Bitmap?,
+    isNextNode: Boolean,
+    onClick: () -> Unit
+) {
+    val density = LocalDensity.current
+
+    val infiniteTransition = rememberInfiniteTransition(label = "ring")
+    val ringScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "ringScale"
+    )
+
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowAlpha"
+    )
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        val horizontalOffset = when {
+            level % 4 == 1 -> (-60).dp
+            level % 4 == 2 -> 0.dp
+            level % 4 == 3 -> 60.dp
+            else -> 0.dp
+        }
+
+        Box(
+            modifier = Modifier
+                .offset(x = horizontalOffset)
+                .size(if (isCurrent) 96.dp else 80.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            // Animated glow for current level
+            if (isCurrent) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .size(96.dp)
+                        .scale(ringScale)
+                        .clip(CircleShape)
                         .background(
-                            Brush.verticalGradient(
-                                colors = if (selectedLevel.value <= unlockedLevels.value) {
-                                    listOf(
-                                        Color(0xFF7965b3),
-                                        Color(0xFF6650a4),
-                                        Color(0xFF5a4692)
-                                    )
-                                } else {
-                                    listOf(Color.Gray, Color.DarkGray)
-                                }
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    GameColors.LevelCurrent.copy(alpha = glowAlpha),
+                                    Color.Transparent
+                                )
                             )
                         )
-                        .border(
-                            width = 2.dp,
-                            color = Color.White.copy(alpha = 0.3f),
-                            shape = RoundedCornerShape(12.dp)
-                        ),
+                )
+            }
+
+            // Glass level node
+            GlassSurface(
+                modifier = Modifier
+                    .size(if (isCurrent) 88.dp else 72.dp)
+                    .clickable(enabled = isUnlocked, onClick = onClick),
+                backgroundColor = when {
+                    isCurrent -> GameColors.LevelCurrent.copy(alpha = 0.3f)
+                    isCompleted && thumbnail != null -> GameColors.LevelCompleted.copy(alpha = 0.2f)
+                    isSelected -> NeonColors.ElectricTeal.copy(alpha = 0.3f)
+                    isUnlocked -> NeonColors.ElectricBlue.copy(alpha = 0.2f)
+                    else -> GameColors.LevelLocked.copy(alpha = 0.2f)
+                },
+                cornerRadius = 36.dp,
+                elevation = if (isSelected || isCurrent) 12.dp else 4.dp
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Play Level ${selectedLevel.value}",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
+                    when {
+                        isCompleted && thumbnail != null -> {
+                            Image(
+                                bitmap = thumbnail.asImageBitmap(),
+                                contentDescription = "Level $level Thumbnail",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(6.dp)
+                                    .clip(CircleShape),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                        isCurrent -> {
+                            Text(text = "⭐", fontSize = 36.sp)
+                        }
+                        isUnlocked -> {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = level.toString(),
+                                    fontSize = if (isCurrent) 26.sp else 22.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextColors.Primary
+                                )
+                                Text(
+                                    text = getDifficultyForLevel(level).displayName,
+                                    fontSize = 9.sp,
+                                    color = TextColors.Secondary
+                                )
+                            }
+                        }
+                        else -> {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Locked",
+                                tint = TextColors.Disabled,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        if (showSettings.value) {
-            LevelMapSettingsDialog(onDismiss = { showSettings.value = false })
+        // Neon path line
+        if (isNextNode) {
+            val pathHeight = 40.dp
+            val nextHorizontalOffset = when {
+                (level + 1) % 4 == 1 -> (-60).dp
+                (level + 1) % 4 == 2 -> 0.dp
+                (level + 1) % 4 == 3 -> 60.dp
+                else -> 0.dp
+            }
+
+            androidx.compose.foundation.Canvas(
+                modifier = Modifier
+                    .width(120.dp)
+                    .height(pathHeight)
+                    .offset(x = (horizontalOffset + nextHorizontalOffset) / 2, y = 0.dp)
+            ) {
+                val startX = size.width / 2 - with(density) { (nextHorizontalOffset - horizontalOffset).toPx() / 2 }
+                val endX = size.width / 2 + with(density) { (nextHorizontalOffset - horizontalOffset).toPx() / 2 }
+
+                drawLine(
+                    brush = Brush.linearGradient(
+                        colors = if (level < (level + 1)) {
+                            listOf(
+                                NeonColors.ElectricTeal.copy(alpha = 0.6f),
+                                NeonColors.ElectricBlue.copy(alpha = 0.4f)
+                            )
+                        } else {
+                            listOf(
+                                Color.Gray.copy(alpha = 0.3f),
+                                Color.Gray.copy(alpha = 0.2f)
+                            )
+                        }
+                    ),
+                    start = Offset(startX, 0f),
+                    end = Offset(endX, size.height),
+                    strokeWidth = 4f,
+                    cap = StrokeCap.Round,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 6f))
+                )
+            }
         }
     }
 }
@@ -269,7 +490,6 @@ fun MovingPinAnimation(
     }
 
     if (currentLevel == fromLevel) {
-        // Starting position - fade out pin
         val alpha = 1f - progress
         if (alpha > 0f) {
             Box(
@@ -279,14 +499,10 @@ fun MovingPinAnimation(
                     .graphicsLayer { this.alpha = alpha },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "📍",
-                    fontSize = 48.sp
-                )
+                Text(text = "📍", fontSize = 48.sp)
             }
         }
     } else if (currentLevel == toLevel) {
-        // Destination level - pin arrives here
         val scale by animateFloatAsState(
             targetValue = if (progress > 0.8f) 1f else 0f,
             animationSpec = spring(
@@ -304,341 +520,85 @@ fun MovingPinAnimation(
                     .scale(scale),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "📍",
-                    fontSize = 40.sp
-                )
+                Text(text = "📍", fontSize = 40.sp)
             }
         }
     }
 }
 
 @Composable
-fun WindingPathNode(
-    level: Int,
-    isUnlocked: Boolean,
-    isCurrent: Boolean,
-    isCompleted: Boolean,
-    isSelected: Boolean,
-    thumbnail: android.graphics.Bitmap?,
-    isNextNode: Boolean,
-    onClick: () -> Unit
-) {
-    val density = LocalDensity.current
-
-    // Animated ring for current level
-    val infiniteTransition = rememberInfiniteTransition(label = "ring")
-    val ringScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "ringScale"
-    )
-
-    val ringAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.6f,
-        targetValue = 0.2f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "ringAlpha"
-    )
-
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        // Winding path positioning - alternates left and right
-        val horizontalOffset = when {
-            level % 4 == 1 -> (-60).dp
-            level % 4 == 2 -> 0.dp
-            level % 4 == 3 -> 60.dp
-            else -> 0.dp
-        }
-
-        Box(
-            modifier = Modifier
-                .offset(x = horizontalOffset)
-                .size(if (isCurrent) 88.dp else 72.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // Animated ring for current level
-            if (isCurrent) {
-                Box(
-                    modifier = Modifier
-                        .size(88.dp)
-                        .scale(ringScale)
-                        .clip(CircleShape)
-                        .background(
-                            Color(0xFFFFD700).copy(alpha = ringAlpha)
-                        )
-                )
-            }
-
-            // Level Node - Skeuomorphic tile style
-            Surface(
-                modifier = Modifier
-                    .size(if (isCurrent) 80.dp else 68.dp)
-                    .clickable(enabled = isUnlocked, onClick = onClick),
-                shape = CircleShape,
-                shadowElevation = if (isSelected || isCurrent) 12.dp else 6.dp,
-                color = Color.Transparent
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            when {
-                                isCurrent -> Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0xFFFFD700),
-                                        Color(0xFFFFA500),
-                                        Color(0xFFFF8C00)
-                                    )
-                                )
-                                isCompleted && thumbnail != null -> Brush.radialGradient(
-                                    colors = listOf(Color.White, Color(0xFFF5F5F5))
-                                )
-                                isSelected -> Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0xFF7965b3),
-                                        Color(0xFF6650a4)
-                                    )
-                                )
-                                isUnlocked -> Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0xFFE8DEF8),
-                                        Color(0xFFD0BCFF)
-                                    )
-                                )
-                                else -> Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0xFFBDBDBD),
-                                        Color(0xFF9E9E9E)
-                                    )
-                                )
-                            }
-                        )
-                        .border(
-                            width = 3.dp,
-                            color = when {
-                                isCurrent -> Color(0xFFFFD700)
-                                isSelected -> Color(0xFF6650a4)
-                                isCompleted -> Color(0xFF4CAF50)
-                                else -> Color.White.copy(alpha = 0.5f)
-                            },
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    when {
-                        // Completed level - show thumbnail
-                        isCompleted && thumbnail != null -> {
-                            Image(
-                                bitmap = thumbnail.asImageBitmap(),
-                                contentDescription = "Level $level Thumbnail",
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(4.dp)
-                                    .clip(CircleShape),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-                        // Current level - show pin/star icon
-                        isCurrent -> {
-                            Text(
-                                text = "⭐",
-                                fontSize = 32.sp
-                            )
-                        }
-                        // Unlocked level - show number
-                        isUnlocked -> {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = level.toString(),
-                                    fontSize = if (isCurrent) 24.sp else 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isSelected) Color.White else Color(0xFF6650a4)
-                                )
-                                Text(
-                                    text = getDifficultyForLevel(level).displayName,
-                                    fontSize = 8.sp,
-                                    color = if (isSelected) Color.White.copy(alpha = 0.8f) else Color(0xFF6650a4).copy(alpha = 0.7f)
-                                )
-                            }
-                        }
-                        // Locked level
-                        else -> {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = "Locked",
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Gradient path line connecting to next node
-        if (isNextNode) {
-            val pathHeight = 40.dp
-            val nextHorizontalOffset = when {
-                (level + 1) % 4 == 1 -> (-60).dp
-                (level + 1) % 4 == 2 -> 0.dp
-                (level + 1) % 4 == 3 -> 60.dp
-                else -> 0.dp
-            }
-
-            Canvas(
-                modifier = Modifier
-                    .width(120.dp)
-                    .height(pathHeight)
-                    .offset(
-                        x = (horizontalOffset + nextHorizontalOffset) / 2,
-                        y = 0.dp
-                    )
-            ) {
-                val startX = size.width / 2 - with(density) { (nextHorizontalOffset - horizontalOffset).toPx() / 2 }
-                val endX = size.width / 2 + with(density) { (nextHorizontalOffset - horizontalOffset).toPx() / 2 }
-
-                // Draw gradient line
-                drawLine(
-                    brush = Brush.verticalGradient(
-                        colors = if (level < (level + 1)) {
-                            listOf(
-                                Color(0xFF6650a4).copy(alpha = 0.6f),
-                                Color(0xFFD0BCFF).copy(alpha = 0.4f)
-                            )
-                        } else {
-                            listOf(
-                                Color(0xFFBDBDBD).copy(alpha = 0.4f),
-                                Color(0xFFE0E0E0).copy(alpha = 0.3f)
-                            )
-                        }
-                    ),
-                    start = Offset(startX, 0f),
-                    end = Offset(endX, size.height),
-                    strokeWidth = 6f,
-                    cap = StrokeCap.Round,
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 5f))
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun LevelMapSettingsDialog(onDismiss: () -> Unit) {
+fun GlassSettingsDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     var musicEnabled by remember { mutableStateOf(GamePreferences.isMusicEnabled(context)) }
     var soundEnabled by remember { mutableStateOf(GamePreferences.isSoundEnabled(context)) }
     var vibrationEnabled by remember { mutableStateOf(GamePreferences.isVibrationEnabled(context)) }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
+    GlassDialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Settings",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Black
-                    )
+                Text(
+                    text = "Settings",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = NeonColors.ElectricTeal
+                )
 
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Text("✕", fontSize = 24.sp, color = Color.Gray)
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Text("✕", fontSize = 24.sp, color = TextColors.Secondary)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clickable {
+                        musicEnabled = !musicEnabled
+                        GamePreferences.setMusicEnabled(context, musicEnabled)
                     }
+                ) {
+                    Text(text = if (musicEnabled) "🎵" else "🔇", fontSize = 52.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(text = "Music", fontSize = 14.sp, color = TextColors.Secondary)
                 }
 
-                Spacer(modifier = Modifier.height(32.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clickable {
+                        soundEnabled = !soundEnabled
+                        GamePreferences.setSoundEnabled(context, soundEnabled)
+                    }
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable {
-                            musicEnabled = !musicEnabled
-                            GamePreferences.setMusicEnabled(context, musicEnabled)
-                        }
-                    ) {
-                        Text(
-                            text = if (musicEnabled) "🎵" else "🔇",
-                            fontSize = 48.sp
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Music",
-                            fontSize = 14.sp,
-                            color = Color.Gray
-                        )
-                    }
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable {
-                            soundEnabled = !soundEnabled
-                            GamePreferences.setSoundEnabled(context, soundEnabled)
-                        }
-                    ) {
-                        Text(
-                            text = if (soundEnabled) "🔊" else "🔈",
-                            fontSize = 48.sp
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Sound",
-                            fontSize = 14.sp,
-                            color = Color.Gray
-                        )
-                    }
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable {
-                            vibrationEnabled = !vibrationEnabled
-                            GamePreferences.setVibrationEnabled(context, vibrationEnabled)
-                        }
-                    ) {
-                        Text(
-                            text = if (vibrationEnabled) "📳" else "📴",
-                            fontSize = 48.sp
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Vibration",
-                            fontSize = 14.sp,
-                            color = Color.Gray
-                        )
-                    }
+                    Text(text = if (soundEnabled) "🔊" else "🔈", fontSize = 52.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(text = "Sound", fontSize = 14.sp, color = TextColors.Secondary)
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clickable {
+                        vibrationEnabled = !vibrationEnabled
+                        GamePreferences.setVibrationEnabled(context, vibrationEnabled)
+                    }
+                ) {
+                    Text(text = if (vibrationEnabled) "📳" else "📴", fontSize = 52.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(text = "Vibration", fontSize = 14.sp, color = TextColors.Secondary)
+                }
             }
         }
     }

@@ -4,6 +4,7 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:allowBackup="true"
@@ -14,6 +15,13 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.PixelPuzzle">
+
+        <!-- AdMob App ID - REPLACE WITH YOUR OWN FOR PRODUCTION -->
+        <!-- For testing, this uses Google's sample app ID -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3490366920456093~4483944914"/>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
