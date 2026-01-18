@@ -61,6 +61,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Initialize debug configuration FIRST
+        DebugConfig.init(this)
+
         // Initialize managers
         soundManager = SoundManager.getInstance(this)
         vibrationManager = VibrationManager.getInstance(this)
@@ -71,7 +74,7 @@ class MainActivity : ComponentActivity() {
         adManager.initialize()
 
         // Enable test ads for development
-        if (DebugConfig.ENABLE_DEBUG_LOGS) {
+        if (DebugConfig.isDebugEnabled()) {
             AdTestHelper.enableTestMode(this)
         }
 
@@ -525,6 +528,8 @@ fun GameScreen(
 @Composable
 fun GameSettingsDialog(onDismiss: () -> Unit, onRestart: () -> Unit, onHome: () -> Unit) {
     val context = LocalContext.current
+    val soundManager = remember { SoundManager.getInstance(context) }
+
     var musicEnabled by remember { mutableStateOf(GamePreferences.isMusicEnabled(context)) }
     var soundEnabled by remember { mutableStateOf(GamePreferences.isSoundEnabled(context)) }
     var vibrationEnabled by remember { mutableStateOf(GamePreferences.isVibrationEnabled(context)) }
@@ -596,6 +601,12 @@ fun GameSettingsDialog(onDismiss: () -> Unit, onRestart: () -> Unit, onHome: () 
                         modifier = Modifier.clickable {
                             musicEnabled = !musicEnabled
                             GamePreferences.setMusicEnabled(context, musicEnabled)
+
+                            if (musicEnabled) {
+                                soundManager.playBackgroundMusic()
+                            } else {
+                                soundManager.stopBackgroundMusic()
+                            }
                         }
                     ) {
                         Text(text = if (musicEnabled) "🎵" else "🔇", fontSize = 40.sp)
@@ -608,6 +619,10 @@ fun GameSettingsDialog(onDismiss: () -> Unit, onRestart: () -> Unit, onHome: () 
                         modifier = Modifier.clickable {
                             soundEnabled = !soundEnabled
                             GamePreferences.setSoundEnabled(context, soundEnabled)
+
+                            if (soundEnabled) {
+                                soundManager.playSound(SoundEffect.POP)
+                            }
                         }
                     ) {
                         Text(text = if (soundEnabled) "🔊" else "🔈", fontSize = 40.sp)
@@ -620,6 +635,11 @@ fun GameSettingsDialog(onDismiss: () -> Unit, onRestart: () -> Unit, onHome: () 
                         modifier = Modifier.clickable {
                             vibrationEnabled = !vibrationEnabled
                             GamePreferences.setVibrationEnabled(context, vibrationEnabled)
+
+                            if (vibrationEnabled) {
+                                val vibrationManager = VibrationManager.getInstance(context)
+                                vibrationManager.vibrate(VibrationPattern.LIGHT_TAP)
+                            }
                         }
                     ) {
                         Text(text = if (vibrationEnabled) "📳" else "📴", fontSize = 40.sp)

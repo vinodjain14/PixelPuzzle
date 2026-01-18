@@ -139,4 +139,14 @@ object GamePreferences {
     fun isImageIdUsed(context: Context, imageId: String): Boolean {
         return getUsedImageIds(context).contains(imageId)
     }
+
+    private const val KEY_DEVELOPER_MODE = "developer_mode_enabled"
+
+    fun isDeveloperModeEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_DEVELOPER_MODE, false)
+    }
+
+    fun setDeveloperModeEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_DEVELOPER_MODE, enabled).apply()
+    }
 }
