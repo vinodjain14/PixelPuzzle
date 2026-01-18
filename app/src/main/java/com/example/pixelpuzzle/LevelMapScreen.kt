@@ -2,6 +2,7 @@ package com.example.pixelpuzzle
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -259,17 +260,15 @@ fun LevelMapScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Glass Play Button
-            GlassButton(
+            // 3D Squishy Play Button (matching other screens)
+            SquishyButton(
                 onClick = { onLevelClick(selectedLevel.value) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp),
+                modifier = Modifier.fillMaxWidth(),
                 enabled = selectedLevel.value <= unlockedLevels.value,
-                backgroundColor = if (selectedLevel.value <= unlockedLevels.value) {
-                    NeonColors.ElectricTeal
+                colors = if (selectedLevel.value <= unlockedLevels.value) {
+                    listOf(NeonColors.CyberGreen, NeonColors.ElectricTeal)
                 } else {
-                    Color.Gray
+                    listOf(Color.Gray, Color.DarkGray)
                 }
             ) {
                 Text(
@@ -529,9 +528,24 @@ fun MovingPinAnimation(
 @Composable
 fun GlassSettingsDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val soundManager = remember { SoundManager.getInstance(context) }
+
     var musicEnabled by remember { mutableStateOf(GamePreferences.isMusicEnabled(context)) }
     var soundEnabled by remember { mutableStateOf(GamePreferences.isSoundEnabled(context)) }
     var vibrationEnabled by remember { mutableStateOf(GamePreferences.isVibrationEnabled(context)) }
+    var debugEnabled by remember { mutableStateOf(DebugConfig.isDebugEnabled()) }
+
+    // Hidden developer mode
+    var developerModeEnabled by remember { mutableStateOf(GamePreferences.isDeveloperModeEnabled(context)) }
+    var tapCount by remember { mutableStateOf(0) }
+
+    // Reset tap count after 2 seconds of no taps
+    LaunchedEffect(tapCount) {
+        if (tapCount > 0) {
+            kotlinx.coroutines.delay(2000)
+            tapCount = 0
+        }
+    }
 
     GlassDialog(onDismissRequest = onDismiss) {
         Column(
@@ -547,7 +561,22 @@ fun GlassSettingsDialog(onDismiss: () -> Unit) {
                     text = "Settings",
                     fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
-                    color = NeonColors.ElectricTeal
+                    color = NeonColors.ElectricTeal,
+                    // Hidden tap detector on title
+                    modifier = Modifier.clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) {
+                        tapCount++
+                        if (tapCount >= 10) {
+                            developerModeEnabled = !developerModeEnabled
+                            GamePreferences.setDeveloperModeEnabled(context, developerModeEnabled)
+                            soundManager.playSound(if (developerModeEnabled) SoundEffect.UNLOCK else SoundEffect.POP)
+                            val vibrationManager = VibrationManager.getInstance(context)
+                            vibrationManager.vibrate(if (developerModeEnabled) VibrationPattern.SUCCESS else VibrationPattern.LIGHT_TAP)
+                            tapCount = 0
+                        }
+                    }
                 )
 
                 IconButton(
@@ -560,6 +589,7 @@ fun GlassSettingsDialog(onDismiss: () -> Unit) {
 
             Spacer(modifier = Modifier.height(32.dp))
 
+            // Audio & Haptics Settings
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
@@ -569,6 +599,12 @@ fun GlassSettingsDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.clickable {
                         musicEnabled = !musicEnabled
                         GamePreferences.setMusicEnabled(context, musicEnabled)
+
+                        if (musicEnabled) {
+                            soundManager.playBackgroundMusic()
+                        } else {
+                            soundManager.stopBackgroundMusic()
+                        }
                     }
                 ) {
                     Text(text = if (musicEnabled) "🎵" else "🔇", fontSize = 52.sp)
@@ -581,6 +617,10 @@ fun GlassSettingsDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.clickable {
                         soundEnabled = !soundEnabled
                         GamePreferences.setSoundEnabled(context, soundEnabled)
+
+                        if (soundEnabled) {
+                            soundManager.playSound(SoundEffect.POP)
+                        }
                     }
                 ) {
                     Text(text = if (soundEnabled) "🔊" else "🔈", fontSize = 52.sp)
@@ -593,11 +633,54 @@ fun GlassSettingsDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.clickable {
                         vibrationEnabled = !vibrationEnabled
                         GamePreferences.setVibrationEnabled(context, vibrationEnabled)
+
+                        if (vibrationEnabled) {
+                            val vibrationManager = VibrationManager.getInstance(context)
+                            vibrationManager.vibrate(VibrationPattern.LIGHT_TAP)
+                        }
                     }
                 ) {
                     Text(text = if (vibrationEnabled) "📳" else "📴", fontSize = 52.sp)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = "Vibration", fontSize = 14.sp, color = TextColors.Secondary)
+                }
+            }
+
+            // Hidden Developer Options (only show when developer mode is enabled)
+            if (developerModeEnabled) {
+                Spacer(modifier = Modifier.height(24.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.2f))
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "Developer",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = NeonColors.ElectricTeal.copy(alpha = 0.7f)
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.clickable {
+                            debugEnabled = !debugEnabled
+                            DebugConfig.setDebugLogsEnabled(context, debugEnabled)
+                            soundManager.playSound(SoundEffect.POP)
+                        }
+                    ) {
+                        Text(text = if (debugEnabled) "🐛" else "🔍", fontSize = 52.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Debug Logs",
+                            fontSize = 14.sp,
+                            color = if (debugEnabled) NeonColors.CyberGreen else TextColors.Tertiary
+                        )
+                    }
                 }
             }
         }

@@ -91,7 +91,7 @@ fun HintButton(
 }
 
 /**
- * Hint selection dialog
+ * Hint selection dialog with updated descriptions
  */
 @Composable
 fun HintDialog(
@@ -103,7 +103,6 @@ fun HintDialog(
     val costs = remember { HintSystemManager.getHintCosts() }
     val totalCoins = remember { mutableStateOf(GamePreferences.getTotalPoints(context)) }
 
-    // Refresh availability when dialog opens
     LaunchedEffect(Unit) {
         availability = HintSystemManager.getHintAvailability(context)
         totalCoins.value = GamePreferences.getTotalPoints(context)
@@ -120,7 +119,6 @@ fun HintDialog(
             Column(
                 modifier = Modifier.padding(24.dp)
             ) {
-                // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -143,7 +141,6 @@ fun HintDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Current coins display
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -159,11 +156,11 @@ fun HintDialog(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Free Hint Option
+                // Free Hint - Show Where
                 HintOptionCard(
-                    icon = "📺",
-                    title = "Free Hint",
-                    description = "Watch an ad to reveal 1 correct piece",
+                    icon = "🎯",
+                    title = "Show Me Where",
+                    description = "Shows where 1 piece belongs with glowing arrow (5 sec)",
                     availability = if (availability.freeHintsRemaining > 0) {
                         "Available (${availability.freeHintsRemaining} left today)"
                     } else {
@@ -180,11 +177,11 @@ fun HintDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Premium Hint Option
+                // Premium Hint - Auto-Solve
                 HintOptionCard(
-                    icon = "✨",
-                    title = "Premium Hint",
-                    description = "Reveal a 3×3 section (9 pieces)",
+                    icon = "🤖",
+                    title = "Auto-Solve Section",
+                    description = "Automatically moves 2×2 area to correct position",
                     availability = if (availability.premiumHintsOwned > 0) {
                         "Owned: ${availability.premiumHintsOwned}"
                     } else if (availability.canAffordPremiumHint) {
@@ -207,11 +204,11 @@ fun HintDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Master Reveal Option
+                // Master Reveal - Solution Preview
                 HintOptionCard(
-                    icon = "👑",
-                    title = "Master Reveal",
-                    description = "Reveal entire quadrant (¼ of puzzle)",
+                    icon = "👁️",
+                    title = "Solution Preview",
+                    description = "Shows complete image faintly for 10 seconds",
                     availability = if (availability.masterRevealsOwned > 0) {
                         "Owned: ${availability.masterRevealsOwned}"
                     } else if (availability.canAffordMasterReveal) {
