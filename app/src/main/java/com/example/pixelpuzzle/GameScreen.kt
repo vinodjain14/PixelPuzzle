@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,15 +29,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.pixelpuzzle.ui.theme.NeonColors
 import com.example.pixelpuzzle.ui.theme.GameColors
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch  // ← ADD THIS
+import kotlinx.coroutines.launch
 
 /**
- * Enhanced GameScreen with Phase B improvements:
- * - Squishy tactile buttons
- * - Clean level complete notification (no wobbling)
- * - Micro-interactions on all icons
- * - Static header (no animations)
+ * Enhanced GameScreen with improved hint system:
+ * - Free Hint: Shows WHERE 1 piece belongs with visual arrow guide
+ * - Premium Hint: Auto-solves a 2×2 section
+ * - Master Reveal: Shows complete solution overlay for 10 seconds
  */
+
 @Composable
 fun GameScreenPhaseB(
     level: Int,
@@ -50,7 +51,7 @@ fun GameScreenPhaseB(
     val showGameSettings = remember { mutableStateOf(false) }
     val currentPoints = remember { mutableStateOf(GamePreferences.getTotalPoints(context)) }
 
-    // ADD THIS - Coroutine scope for launching coroutines
+    // Coroutine scope for launching coroutines
     val coroutineScope = rememberCoroutineScope()
 
     // Hint dialog states
@@ -116,7 +117,7 @@ fun GameScreenPhaseB(
                 GamePreferences.saveLevelThumbnail(context, level, bitmap)
             }
 
-            GamePreferences.addPoints(context, 10)
+            GamePreferences.addPoints(context, 1000)
             GamePreferences.unlockNextLevel(context)
 
             // Trigger coin flip
@@ -248,9 +249,6 @@ fun GameScreenPhaseB(
                             vibrationManager.vibrate(VibrationPattern.SUCCESS)
                             soundManager.playSound(SoundEffect.UNLOCK)
 
-                            // TODO: Actually move pieces to correct positions here
-                            // For now, just show where they should go
-
                             coroutineScope.launch {
                                 delay(5000)
                                 showRevealAnimation = false
@@ -306,7 +304,6 @@ fun GameScreenPhaseB(
                     // Use owned reveal
                     if (HintSystemManager.useMasterReveal(context)) {
                         // MASTER REVEAL: Show complete image as transparent overlay
-                        // This will show ALL pieces in their correct positions
                         revealedPieceIds = state.pieces.map { it.id }.toSet()
                         showRevealAnimation = true
                         vibrationManager.vibrate(VibrationPattern.SUCCESS)
@@ -486,7 +483,12 @@ fun GameScreenPhaseB(
                                     HintRevealOverlay(
                                         state = state,
                                         revealedPieceIds = revealedPieceIds,
-                                        bitmap = bitmap
+                                        bitmap = bitmap,
+                                        hintMessage = when {
+                                            revealedPieceIds.size == 1 -> "Move the ORANGE piece to the GREEN position"
+                                            revealedPieceIds.size <= 4 -> "Solve this highlighted section!"
+                                            else -> "Study the complete solution!"
+                                        }
                                     )
                                 }
 
@@ -603,49 +605,251 @@ fun GameScreenPhaseB(
 fun HintRevealOverlay(
     state: GameState,
     revealedPieceIds: Set<Int>,
-    bitmap: Bitmap
+    bitmap: Bitmap,
+    hintMessage: String = "Follow the arrows to solve!"
 ) {
     val density = LocalDensity.current
     val infiniteTransition = rememberInfiniteTransition(label = "hint")
 
     val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 0.8f,
+        initialValue = 0.4f,
+        targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = FastOutSlowInEasing),
+            animation = tween(600, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "hintGlow"
     )
 
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val cellWidth = size.width / state.cols
-        val cellHeight = size.height / state.rows
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
 
-        revealedPieceIds.forEach { pieceId ->
-            val piece = state.pieces.find { it.id == pieceId }
-            piece?.let {
-                val correctPos = it.originalRow * state.cols + it.originalCol
-                val correctCol = correctPos % state.cols
-                val correctRow = correctPos / state.cols
+    Box(modifier = Modifier.fillMaxSize()) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val cellWidth = size.width / state.cols
+            val cellHeight = size.height / state.rows
 
-                // Draw glowing indicator at correct position
-                val x = correctCol * cellWidth
-                val y = correctRow * cellHeight
+            revealedPieceIds.forEach { pieceId ->
+                val piece = state.pieces.find { it.id == pieceId }
+                piece?.let {
+                    val correctPos = it.originalRow * state.cols + it.originalCol
+                    val correctCol = correctPos % state.cols
+                    val correctRow = correctPos / state.cols
 
-                drawRect(
-                    color = NeonColors.CyberGreen.copy(alpha = glowAlpha * 0.5f),
-                    topLeft = androidx.compose.ui.geometry.Offset(x, y),
-                    size = androidx.compose.ui.geometry.Size(cellWidth, cellHeight)
-                )
+                    val currentCol = it.currentPos % state.cols
+                    val currentRow = it.currentPos / state.cols
 
-                // Draw border
-                drawRect(
-                    color = NeonColors.CyberGreen.copy(alpha = glowAlpha),
-                    topLeft = androidx.compose.ui.geometry.Offset(x, y),
-                    size = androidx.compose.ui.geometry.Size(cellWidth, cellHeight),
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f)
-                )
+                    val targetX = correctCol * cellWidth + cellWidth / 2
+                    val targetY = correctRow * cellHeight + cellHeight / 2
+                    val currentX = currentCol * cellWidth + cellWidth / 2
+                    val currentY = currentRow * cellHeight + cellHeight / 2
+
+                    // If piece is in wrong position, show the guide
+                    if (it.currentPos != correctPos) {
+                        // 1. Highlight current piece with orange glow
+                        drawCircle(
+                            color = NeonColors.NeonOrange.copy(alpha = glowAlpha * 0.5f),
+                            radius = (cellWidth / 2) * pulseScale,
+                            center = androidx.compose.ui.geometry.Offset(currentX, currentY)
+                        )
+
+                        // Draw thick orange border around current piece
+                        drawRect(
+                            color = NeonColors.NeonOrange.copy(alpha = glowAlpha),
+                            topLeft = androidx.compose.ui.geometry.Offset(
+                                currentCol * cellWidth,
+                                currentRow * cellHeight
+                            ),
+                            size = androidx.compose.ui.geometry.Size(cellWidth, cellHeight),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f)
+                        )
+
+                        // 2. Show target position with green glow
+                        drawCircle(
+                            color = NeonColors.CyberGreen.copy(alpha = glowAlpha * 0.5f),
+                            radius = (cellWidth / 2) * pulseScale,
+                            center = androidx.compose.ui.geometry.Offset(targetX, targetY)
+                        )
+
+                        // Draw thick green border at target
+                        drawRect(
+                            color = NeonColors.CyberGreen.copy(alpha = glowAlpha),
+                            topLeft = androidx.compose.ui.geometry.Offset(
+                                correctCol * cellWidth,
+                                correctRow * cellHeight
+                            ),
+                            size = androidx.compose.ui.geometry.Size(cellWidth, cellHeight),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f)
+                        )
+
+                        // 3. Draw thick connecting line
+                        drawLine(
+                            color = NeonColors.GlowYellow.copy(alpha = glowAlpha * 0.7f),
+                            start = androidx.compose.ui.geometry.Offset(currentX, currentY),
+                            end = androidx.compose.ui.geometry.Offset(targetX, targetY),
+                            strokeWidth = 5f
+                        )
+
+                        // 4. Draw big arrow pointing to target
+                        val dx = targetX - currentX
+                        val dy = targetY - currentY
+                        val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+
+                        if (distance > 10f) {
+                            val dirX = dx / distance
+                            val dirY = dy / distance
+
+                            // Arrow at 70% of the way to target
+                            val arrowX = currentX + dirX * distance * 0.7f
+                            val arrowY = currentY + dirY * distance * 0.7f
+
+                            // Large arrow size
+                            val arrowSize = 40f
+
+                            val path = androidx.compose.ui.graphics.Path().apply {
+                                // Arrow tip
+                                moveTo(arrowX, arrowY)
+                                // Left wing
+                                lineTo(
+                                    arrowX - dirX * arrowSize - dirY * arrowSize * 0.7f,
+                                    arrowY - dirY * arrowSize + dirX * arrowSize * 0.7f
+                                )
+                                // Back to near tip
+                                lineTo(
+                                    arrowX - dirX * arrowSize * 0.5f,
+                                    arrowY - dirY * arrowSize * 0.5f
+                                )
+                                // Right wing
+                                lineTo(
+                                    arrowX - dirX * arrowSize + dirY * arrowSize * 0.7f,
+                                    arrowY - dirY * arrowSize - dirX * arrowSize * 0.7f
+                                )
+                                close()
+                            }
+
+                            // Draw arrow with glow
+                            drawPath(
+                                path = path,
+                                color = NeonColors.GlowYellow.copy(alpha = glowAlpha * 0.9f)
+                            )
+
+                            // Draw arrow outline for more visibility
+                            drawPath(
+                                path = path,
+                                color = Color.White.copy(alpha = glowAlpha),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
+                            )
+                        }
+                    } else {
+                        // Piece is already in correct position - just show green checkmark effect
+                        drawCircle(
+                            color = NeonColors.CyberGreen.copy(alpha = glowAlpha * 0.4f),
+                            radius = (cellWidth / 2) * pulseScale,
+                            center = androidx.compose.ui.geometry.Offset(targetX, targetY)
+                        )
+
+                        drawRect(
+                            color = NeonColors.CyberGreen.copy(alpha = glowAlpha),
+                            topLeft = androidx.compose.ui.geometry.Offset(
+                                correctCol * cellWidth,
+                                correctRow * cellHeight
+                            ),
+                            size = androidx.compose.ui.geometry.Size(cellWidth, cellHeight),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Add helpful message at the top
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Main hint message
+            GlassCard(
+                backgroundColor = Color.Black.copy(alpha = 0.8f),
+                borderColor = NeonColors.GlowYellow,
+                cornerRadius = 16.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "💡",
+                        fontSize = 24.sp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = hintMessage,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+
+            // Legend
+            GlassCard(
+                backgroundColor = Color.Black.copy(alpha = 0.7f),
+                borderColor = NeonColors.ElectricTeal.copy(alpha = 0.5f),
+                cornerRadius = 12.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Orange indicator
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(NeonColors.NeonOrange)
+                    )
+                    Text(
+                        text = "Current",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+
+                    // Arrow
+                    Text(
+                        text = "→",
+                        fontSize = 18.sp,
+                        color = NeonColors.GlowYellow,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    // Green indicator
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(NeonColors.CyberGreen)
+                    )
+                    Text(
+                        text = "Target",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
             }
         }
     }
@@ -828,7 +1032,7 @@ fun GameSettingsDialogTactile(
                             soundManager.playSound(SoundEffect.POP)
                         }
                     ) {
-                        Text(text = if (debugEnabled) "🐛" else "🔍", fontSize = 48.sp)
+                        Text(text = if (debugEnabled) "🛠" else "📕", fontSize = 48.sp)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "Debug Logs",
