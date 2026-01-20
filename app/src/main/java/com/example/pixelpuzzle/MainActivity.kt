@@ -214,7 +214,7 @@ fun GameScreen(
                 GamePreferences.saveLevelThumbnail(context, level, bitmap)
             }
 
-            GamePreferences.addPoints(context, 10)
+            GamePreferences.addPoints(context, 1000)
             GamePreferences.unlockNextLevel(context)
             currentPoints.value = GamePreferences.getTotalPoints(context)
             soundManager.playSound(SoundEffect.COIN)
